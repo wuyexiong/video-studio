@@ -4,11 +4,11 @@
 
 | Archetype ID | Use Case | Scene Mix (Live Stream : Diagram : Breathing/Evidence) | Signature Sequence Pattern |
 | :--- | :--- | :---: | :--- |
-| **`teardown`** | 海外 SaaS / 独立开发产品商业拆解 | `30% : 40% : 30%` | `focus_hud_demo` (痛点钩子) &rarr; `live_web_showcase` (官网/定价实录) &rarr; `evidence_clip` (条款底牌) &rarr; `flow_3node` (技术栈与毛利) &rarr; `matrix_compare` (竞品与差评) &rarr; `chapter_card` (7天微创新结论) |
-| **`yt-explainer`** | YouTube 深度演讲 / 外文长视频二创精讲 | `20% : 50% : 30%` | `persona_quote` (原作者背书+核心暴论) &rarr; `dot_matrix_stat` (反常识数据) &rarr; `chapter_card` (章节设问) &rarr; `flow_3node` / `ranked_bars` (把抽象原话翻译成白话视觉) &rarr; `chapter_card` (个人实战洞察) |
-| **`science`** | AI / 编程 / 商业底层原理动画科普 | `15% : 60% : 25%` | `focus_hud_demo` (具象生活/开发困惑) &rarr; `evidence_clip` (经典论文/事故引出) &rarr; `flow_3node` &rarr; `ranked_bars` &rarr; `matrix_compare` (层层递进拆黑盒) &rarr; `chapter_card` (一句话本质记忆锚点) |
-| **`github`** | GitHub 开源项目拆解与跑通实战 | `35% : 40% : 25%` | `live_web_showcase` (Repo 首页与 Star 趋势) &rarr; `terminal_code_live` (三行命令跑通实况) &rarr; `flow_3node` (核心目录与数据流) &rarr; `matrix_compare` (对比同类闭源/开源方案) &rarr; `chapter_card` (商业化或自用建议) |
-| **`hands-on`** | 新产品 / 新模型第一时间上手实测 | `50% : 25% : 25%` | `chapter_card` (实测悬念开场) &rarr; 多段 `live_web_showcase` / `terminal_code_live` (核心 Case 实测流) &rarr; `ranked_bars` (速度/价格/准确率实测分) &rarr; `matrix_compare` (红绿优缺点总结) &rarr; `chapter_card` (值不值得冲) |
+| **`teardown`** | 海外 SaaS / 独立开发产品商业拆解 | `30% : 40% : 30%` | `focus_hud_demo` (痛点钩子) &rarr; `live_web_showcase` (官网/定价实录) &rarr; `evidence_clip` (条款底牌) &rarr; `flow_3node` / `row_permission_table` &rarr; `matrix_compare` (竞品与差评) &rarr; `chapter_card` (7天微创新结论) |
+| **`yt-explainer`** | YouTube 深度演讲 / 外文长视频二创精讲 | `20% : 50% : 30%` | `persona_quote` (原作者背书+核心暴论) &rarr; `dot_matrix_stat` (反常识数据) &rarr; `acronym_token_slot` (完形填空猜词/缩写展开) &rarr; `metaphor_canvas` (旋钮阵列/房子剖面) &rarr; `defense_boundary_flow` / `ranked_bars` &rarr; `chapter_card` (个人实战洞察) |
+| **`science`** | AI / 编程 / 商业底层原理动画科普 | `15% : 60% : 25%` | `focus_hud_demo` (具象困惑) &rarr; `defense_boundary_flow` (两扇拱门/信任边界) &rarr; `row_permission_table` (横向角色权限表) &rarr; `pipeline_timeline_flow` (并发时间轴/流水线传染) &rarr; `skill_editor_spotlight` (报告聚焦) &rarr; `chapter_card` |
+| **`github`** | GitHub 开源项目拆解与跑通实战 | `35% : 40% : 25%` | `chapter_card` (`heroUnderlineMode` 爆款大字钩子) &rarr; `skill_editor_spotlight` (源码/Prompt 逐句聚光灯拆解) &rarr; `stack_slice_builder` (功能切片堆叠+浏览器验收) &rarr; `traffic_gate_box` / `deep_module_box` / `org_tree_radiate` &rarr; `pipeline_timeline_flow` |
+| **`hands-on`** | 新产品 / 新模型第一时间上手实测 | `50% : 25% : 25%` | `chapter_card` (实测悬念) &rarr; `annotated_ui_tour` (`① ② ③` 三栏界面聚光灯导览) &rarr; `org_tree_radiate` (幕僚长架构树对比) &rarr; `split_tree_chat_dispatch` (左树生长左移+右侧派工联动) &rarr; `matrix_compare` / `row_permission_table` |
 
 ---
 

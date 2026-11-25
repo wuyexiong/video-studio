@@ -9,7 +9,7 @@ description: >-
   product reviews. Integrates dual-mode voiceover (personal GPT-SoVITS voice
   clone on 127.0.0.1:9880 or raw human recording auto-cleanup),
   Qwen3-ForcedAligner millisecond alignment, 60fps Chrome dynamic web capture,
-  10 Remotion primitives, chapter-chunked incremental rendering, and 16:9
+  22 Remotion primitives (100% coverage of multi-beat progressive evolution canvases), chapter-chunked incremental rendering, and 16:9
   (1920x1080) MP4 + SRT output. Use whenever the user invokes /video-studio or
   asks to turn a report, URL, GitHub repo, YouTube video/SRT, or draft script
   into a video.
@@ -50,8 +50,8 @@ Read [archetypes-and-longform.md](./references/archetypes-and-longform.md) to se
 > If the user asks for a **3~15 minute full video** without having approved the script/outline yet, first present the **Chapter Outline + Opening 15s Sample or Script Table** for quick confirmation (or render Chapter 1 first in ~15 seconds) before synthesizing 10 minutes of scenes. If the user explicitly says "直接直出全片", render all chapters directly.
 
 ### Step 2: Author `video_project.json` in the User's Active Workspace
-Read [primitives-and-schema.md](./references/primitives-and-schema.md) for the exact JSON schema of `video_project.json` and the **10 Universal Remotion Primitives**:
-`chapter_card`, `persona_quote`, `dot_matrix_stat`, `flow_3node`, `matrix_compare`, `focus_hud_demo`, `live_web_showcase`, `terminal_code_live`, `ranked_bars`, `evidence_clip`.
+Read [primitives-and-schema.md](./references/primitives-and-schema.md) for the exact JSON schema of `video_project.json`, the **Universal Scene Thesis Header (`topTitle` / `topPill`)**, and the **22 Universal Remotion Primitives**:
+`chapter_card` (supports `heroUnderlineMode`), `persona_quote`, `dot_matrix_stat`, `flow_3node`, `matrix_compare`, `focus_hud_demo`, `live_web_showcase`, `terminal_code_live`, `ranked_bars`, `evidence_clip`, `skill_editor_spotlight`, `stack_slice_builder`, `traffic_gate_box`, `deep_module_box`, `split_tree_chat_dispatch`, `annotated_ui_tour`, `org_tree_radiate`, `pipeline_timeline_flow`, `defense_boundary_flow`, `row_permission_table`, `acronym_token_slot`, `metaphor_canvas`.
 
 Key authoring rules for **3~15 Minute Long Videos**:
 - Partition into **chapters of `35~65 seconds` each** (`5~8 scenes` per chapter, ~`180~350` spoken units per chapter at `~345 CPM`).

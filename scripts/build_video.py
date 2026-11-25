@@ -72,6 +72,15 @@ VALID_PRIMITIVES = {
     "skill_editor_spotlight",
     "stack_slice_builder",
     "traffic_gate_box",
+    "deep_module_box",
+    "split_tree_chat_dispatch",
+    "annotated_ui_tour",
+    "org_tree_radiate",
+    "pipeline_timeline_flow",
+    "defense_boundary_flow",
+    "row_permission_table",
+    "acronym_token_slot",
+    "metaphor_canvas",
 }
 
 
@@ -198,101 +207,164 @@ def onset_safe_trim_48k(raw_wav: Path, out_wav: Path, sr_target: int = 48000) ->
     return len(clipped) / float(sr)
 
 
+def is_healthy_clause_audio(wav_arr: np.ndarray, sr: int, chars: list, n_units: int) -> tuple[bool, str]:
+    """
+    Detect stochastic GPT-SoVITS attention collapse / silent output / early EOS truncation.
+    Healthy 48kHz speech has RMS >= 0.018, Peak >= 0.12, duration >= max(0.50, n_units * 0.088),
+    and does not collapse >65% of aligned characters into zero-length timestamps (start == end).
+    """
+    if len(wav_arr) == 0:
+        return False, "empty_waveform"
+    dur = len(wav_arr) / float(sr)
+    rms = float(np.sqrt(np.mean(wav_arr ** 2)))
+    peak = float(np.max(np.abs(wav_arr)))
+    min_expected_dur = max(0.50, n_units * 0.088)
+    if rms < 0.018 or peak < 0.12:
+        return False, f"silent_collapse(rms={rms:.4f},peak={peak:.4f})"
+    if dur < min_expected_dur:
+        return False, f"early_eos_truncation(dur={dur:.3f}s<min={min_expected_dur:.3f}s,units={n_units})"
+    if len(chars) >= 6:
+        nonzero = sum(1 for c in chars if (float(c["end"]) - float(c["start"])) > 0.005)
+        if nonzero < len(chars) * 0.35:
+            return False, f"aligner_timestamp_collapse(nonzero={nonzero}/{len(chars)})"
+    return True, "ok"
+
+
 def synth_and_align_clause(tts_text: str, preset: str, speed: float, cache_dir: Path, aligner) -> tuple[Path, float, list]:
     """
-    Aligner-Guided Exact Trim & Timestamping (v3):
-    1. Convert raw GPT-SoVITS output to 48kHz PCM.
-    2. Run Qwen3-ForcedAligner FIRST on the untrimmed 48kHz audio to locate exact first/last phoneme timestamps!
-    3. Slice [first_char.start - 75ms : last_char.end + 85ms] so:
-       - 100% of initial unvoiced consonants are preserved (75ms pre-roll),
-       - 0ms of random leading breath/hum bloat (fixes the 720ms early-subtitle bug!),
-       - Returned character timings are shifted by slice offset so chars[0].start == ~0.075s!
+    Aligner-Guided + Acoustic-Bounded Exact Trim & Timestamping (v4 with Silence Auto-Retry):
+    1. Validate existing cache against silence/truncation poisoning; auto-purge if unhealthy.
+    2. Up to 4 synthesis attempts with progressive sampling stabilization if GPT-SoVITS hits early EOS or silence.
+    3. Union Qwen3-ForcedAligner [first_st, last_ed] with real acoustic voice activity [ac_on, ac_off]
+       so genuine spoken syllables are never chopped off by aligner boundary compression.
     """
     key = sha256_str(f"v3_align_trim|{preset}|{speed:.3f}|{tts_text}")
     wav_cache = cache_dir / f"clause_{key}.wav"
     json_cache = cache_dir / f"clause_{key}.json"
+    n_units = max(1, count_units(tts_text))
+    sr = 48000
 
     if wav_cache.exists() and json_cache.exists():
-        meta = json.loads(json_cache.read_text(encoding="utf-8"))
-        return wav_cache, float(meta["duration"]), meta["chars"]
+        try:
+            meta = json.loads(json_cache.read_text(encoding="utf-8"))
+            cached_wav, cached_sr = sf.read(str(wav_cache), dtype="float32")
+            ok, reason = is_healthy_clause_audio(cached_wav, cached_sr, meta.get("chars", []), n_units)
+            if ok:
+                return wav_cache, float(meta["duration"]), meta["chars"]
+            print(f"[VoiceClone Guard] Purging unhealthy cached clause ({reason}): {tts_text}")
+        except Exception:
+            pass
+        wav_cache.unlink(missing_ok=True)
+        json_cache.unlink(missing_ok=True)
 
-    ref_wav, ref_txt, ref_lang = VOICE_PRESETS[preset]
-    resolved_lang = "en" if preset == "en" else "zh"
-    payload = {
-        "text": tts_text,
-        "text_lang": resolved_lang,
-        "ref_audio_path": ref_wav,
-        "prompt_text": ref_txt,
-        "prompt_lang": ref_lang,
-        "top_k": 15,
-        "top_p": 1.0,
-        "temperature": 1.0,
-        "text_split_method": "cut5",
-        "batch_size": 1,
-        "speed_factor": speed,
-        "fragment_interval": 0.22,
-        "parallel_infer": True,
-        "repetition_penalty": 1.35,
-        "media_type": "wav",
-        "streaming_mode": False,
-    }
-    raw_tmp = cache_dir / f"raw_{key}.wav"
-    pcm48_tmp = cache_dir / f"pcm48_{key}.wav"
-    req = urllib.request.Request(
-        "http://127.0.0.1:9880/tts",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        raw_tmp.write_bytes(resp.read())
+    # 4-tier retry schedule to defeat stochastic GPT-SoVITS attention/EOS collapse
+    retry_configs = [
+        {"preset": preset, "temp": 0.90, "top_p": 0.95, "top_k": 15, "split": "cut5", "parallel": True, "text": tts_text},
+        {"preset": preset, "temp": 0.75, "top_p": 0.90, "top_k": 12, "split": "cut0", "parallel": False, "text": tts_text.rstrip("，,；; ") + "。"},
+        {"preset": "mix",  "temp": 0.80, "top_p": 0.92, "top_k": 15, "split": "cut0", "parallel": False, "text": tts_text.rstrip("，,；; ") + "。"},
+        {"preset": "mix",  "temp": 0.65, "top_p": 0.85, "top_k": 10, "split": "cut5", "parallel": False, "text": tts_text},
+    ]
 
-    sr = 48000
-    subprocess.run([
-        FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-        "-i", str(raw_tmp), "-ac", "1", "-ar", str(sr), "-c:a", "pcm_s16le", str(pcm48_tmp)
-    ], check=True)
-    raw_tmp.unlink(missing_ok=True)
+    clipped = np.zeros(int(0.5 * sr), dtype=np.float32)
+    chars = []
 
-    wav, _ = sf.read(str(pcm48_tmp), dtype="float32")
-    wav = wav - float(np.mean(wav)) if len(wav) else np.zeros(int(0.1 * sr), dtype=np.float32)
+    for attempt_idx, cfg in enumerate(retry_configs, 1):
+        cur_preset = cfg["preset"]
+        ref_wav, ref_txt, ref_lang = VOICE_PRESETS[cur_preset]
+        resolved_lang = "en" if cur_preset == "en" else "zh"
+        payload = {
+            "text": cfg["text"],
+            "text_lang": resolved_lang,
+            "ref_audio_path": ref_wav,
+            "prompt_text": ref_txt,
+            "prompt_lang": ref_lang,
+            "top_k": cfg["top_k"],
+            "top_p": cfg["top_p"],
+            "temperature": cfg["temp"],
+            "text_split_method": cfg["split"],
+            "batch_size": 1,
+            "speed_factor": speed,
+            "fragment_interval": 0.22,
+            "parallel_infer": cfg["parallel"],
+            "repetition_penalty": 1.35,
+            "media_type": "wav",
+            "streaming_mode": False,
+        }
+        raw_tmp = cache_dir / f"raw_{key}.wav"
+        pcm48_tmp = cache_dir / f"pcm48_{key}.wav"
+        req = urllib.request.Request(
+            "http://127.0.0.1:9880/tts",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            raw_tmp.write_bytes(resp.read())
 
-    align_lang = "English" if preset == "en" else "Chinese"
-    res = aligner.align(pcm48_tmp, tts_text, language=align_lang)
-    pcm48_tmp.unlink(missing_ok=True)
-    raw_segs = res.segments or []
+        subprocess.run([
+            FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(raw_tmp), "-ac", "1", "-ar", str(sr), "-c:a", "pcm_s16le", str(pcm48_tmp)
+        ], check=True)
+        raw_tmp.unlink(missing_ok=True)
 
-    if raw_segs:
-        first_st = float(raw_segs[0]["start"])
-        last_ed = float(raw_segs[-1]["end"])
-        cut_start_sec = max(0.0, first_st - 0.075)
-        cut_end_sec = min(len(wav) / float(sr), last_ed + 0.085)
-        i0 = int(round(cut_start_sec * sr))
-        i1 = max(i0 + 1, int(round(cut_end_sec * sr)))
-        clipped = wav[i0:i1].copy()
-        # Ensure at least 65ms pre-roll if raw TTS started at 0.00s
-        extra_pre_sec = 0.0
-        if (first_st - cut_start_sec) < 0.065:
-            extra_pre_sec = 0.065 - (first_st - cut_start_sec)
-            clipped = np.concatenate([np.zeros(int(round(extra_pre_sec * sr)), dtype=np.float32), clipped])
+        wav, _ = sf.read(str(pcm48_tmp), dtype="float32")
+        wav = wav - float(np.mean(wav)) if len(wav) else np.zeros(int(0.1 * sr), dtype=np.float32)
 
-        fade_n = min(int(0.008 * sr), len(clipped) // 8)
-        if fade_n > 1:
-            fc = 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_n, dtype=np.float32) / fade_n))
-            clipped[:fade_n] *= fc
-            clipped[-fade_n:] *= fc[::-1]
+        align_lang = "English" if cur_preset == "en" else "Chinese"
+        res = aligner.align(pcm48_tmp, tts_text, language=align_lang)
+        pcm48_tmp.unlink(missing_ok=True)
+        raw_segs = res.segments or []
 
-        chars = [
-            {
-                "text": s["text"],
-                "start": round(float(s["start"]) - cut_start_sec + extra_pre_sec, 3),
-                "end": round(float(s["end"]) - cut_start_sec + extra_pre_sec, 3),
-            }
-            for s in raw_segs
-        ]
-    else:
-        clipped = wav.copy()
-        chars = []
+        # Compute acoustic active speech envelope (>0.012 peak in 5ms windows) so we never chop off real voice
+        win = max(1, int(0.005 * sr))
+        padded = np.pad(np.abs(wav), (0, (-len(wav)) % win))
+        active_wins = np.where(padded.reshape(-1, win).max(axis=1) > 0.012)[0]
+        ac_on_sec = float(active_wins[0] * win) / sr if len(active_wins) > 0 else 0.0
+        ac_off_sec = float(min(len(wav), (active_wins[-1] + 1) * win)) / sr if len(active_wins) > 0 else (len(wav) / float(sr))
+
+        if raw_segs:
+            first_st = float(raw_segs[0]["start"])
+            last_ed = float(raw_segs[-1]["end"])
+            eff_start = min(first_st, ac_on_sec) if len(active_wins) > 0 else first_st
+            eff_end = max(last_ed, ac_off_sec) if len(active_wins) > 0 else last_ed
+            cut_start_sec = max(0.0, eff_start - 0.075)
+            cut_end_sec = min(len(wav) / float(sr), eff_end + 0.085)
+            i0 = int(round(cut_start_sec * sr))
+            i1 = max(i0 + 1, int(round(cut_end_sec * sr)))
+            clipped = wav[i0:i1].copy()
+            extra_pre_sec = 0.0
+            if (eff_start - cut_start_sec) < 0.065:
+                extra_pre_sec = 0.065 - (eff_start - cut_start_sec)
+                clipped = np.concatenate([np.zeros(int(round(extra_pre_sec * sr)), dtype=np.float32), clipped])
+
+            fade_n = min(int(0.008 * sr), len(clipped) // 8)
+            if fade_n > 1:
+                fc = 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_n, dtype=np.float32) / fade_n))
+                clipped[:fade_n] *= fc
+                clipped[-fade_n:] *= fc[::-1]
+
+            clip_dur = round(len(clipped) / float(sr), 3)
+            chars = [
+                {
+                    "text": s["text"],
+                    "start": round(max(0.0, min(clip_dur, float(s["start"]) - cut_start_sec + extra_pre_sec)), 3),
+                    "end": round(max(0.0, min(clip_dur, float(s["end"]) - cut_start_sec + extra_pre_sec)), 3),
+                }
+                for s in raw_segs
+            ]
+            # If aligner compressed trailing char timestamps while acoustic speech continued, spread trailing chars proportionally
+            if chars and chars[-1]["end"] < clip_dur - 0.25:
+                chars[-1]["end"] = round(max(chars[-1]["start"] + 0.08, clip_dur - 0.06), 3)
+        else:
+            clipped = wav.copy()
+            chars = []
+
+        ok, reason = is_healthy_clause_audio(clipped, sr, chars, n_units)
+        if ok:
+            if attempt_idx > 1:
+                print(f"[VoiceClone Guard] Retry #{attempt_idx} succeeded for: {tts_text} (dur={len(clipped)/sr:.2f}s)")
+            break
+        print(f"[VoiceClone Guard] Attempt #{attempt_idx} unhealthy ({reason}) for '{tts_text}' -> retrying...")
 
     sf.write(str(wav_cache), clipped, sr, subtype="PCM_16")
     dur = round(len(clipped) / float(sr), 3)
@@ -404,7 +476,24 @@ def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float,
             dry_arr = np.concatenate([dry_arr, np.zeros(samples_per_frame - rem, dtype=np.float32)])
 
         # Normalize chapter voice track to -16.5 LUFS + mix warm ambient pad & micro-SFX
-        ch_hash = sha256_str(json.dumps([c["ttsText"] for c in captions_payload], ensure_ascii=False) + f"|v3|{speed_default}")
+        # Include per-scene preset, speed, pauses, tail pause, fps, and exact aligned clause bounds in ch_hash!
+        ch_hash_payload = {
+            "v": "v4_full_timing",
+            "fps": fps,
+            "speed_default": speed_default,
+            "chapter_tail_pause_ms": ch.get("chapter_tail_pause_ms"),
+            "scenes": [
+                {
+                    "id": s_out["id"],
+                    "preset": s_in.get("preset") or proj.get("default_preset", "mix"),
+                    "speed": float(s_in.get("speed") or speed_default),
+                    "pause_after_ms": s_in.get("pause_after_ms"),
+                    "clauses": [(c["ttsText"], c["start"], c["end"]) for c in s_out["clauses"]],
+                }
+                for s_out, s_in in zip(scenes_payload, scenes_in)
+            ],
+        }
+        ch_hash = sha256_str(json.dumps(ch_hash_payload, ensure_ascii=False, sort_keys=True))
         ch_wav = cache_dir / f"chap_{ch_idx + 1:02d}_{ch_hash}.wav"
         if not ch_wav.exists():
             tmp_dry = cache_dir / f"tmp_dry_{ch_idx}.wav"
@@ -753,7 +842,7 @@ def main():
         staged_scenes = json.loads(json.dumps(ch["scenes"]))
         for sc in staged_scenes:
             d = sc.get("data", {})
-            for field in ("videoFile", "avatarFile"):
+            for field in ("videoFile", "avatarFile", "imageFile"):
                 if d.get(field):
                     src_f = (proj_dir / d[field]).resolve()
                     if src_f.exists():
