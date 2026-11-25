@@ -1,0 +1,14 @@
+{
+  "canvas": "#262626",
+  "card": "#303030",
+  "border_hairline": "#454548",
+  "paper_contrast": "#F7F6F2",
+  "ink_primary": "#F5F5F7",
+  "ink_secondary": "#A1A1AA",
+  "amber_brand": "#F59E0B",
+  "emerald_allow": "#34D399",
+  "coral_risk": "#EF5350",
+  "whitespace_min_ratio": 0.72,
+  "target_cpm": [335, 360],
+  "target_lufs": -16.5
+}

@@ -1,0 +1,13 @@
+# Node & Remotion build/runtime artifacts
+runtime/node_modules/
+runtime/dist/
+runtime/build/
+runtime/public/job_*/
+
+# Python & OS caches
+__pycache__/
+*.py[cod]
+.DS_Store
+.vstudio_cache/
+*.mp4
+*.wav

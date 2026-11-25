@@ -1,0 +1,34 @@
+{
+  "slug": "sample_teardown",
+  "title": "Sample Multi-Chapter Video Project",
+  "archetype": "teardown",
+  "voice_mode": "clone",
+  "default_preset": "mix",
+  "speed_factor": 1.10,
+  "fps": 30,
+  "chapters": [
+    {
+      "title": "核心钩子",
+      "scenes": [
+        {
+          "id": "s1",
+          "primitive": "chapter_card",
+          "preset": "zh",
+          "clauses": [
+            {
+              "tts_text": "为什么九成独立开发工具活不过第一周？",
+              "display_text": "为什么 90% 独立开发工具活不过首周？"
+            }
+          ],
+          "data": {
+            "eyebrow": "CHAPTER 01 · THE TRAP",
+            "headline": "不是代码写得不够好",
+            "subheadline": "而是把维生素当成了止痛药",
+            "tone": "amber",
+            "pills": ["🔍 真实取证样本", "📊 零算力架构解析"]
+          }
+        }
+      ]
+    }
+  ]
+}
