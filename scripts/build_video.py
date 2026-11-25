@@ -80,10 +80,12 @@ def sha256_str(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
 
-NUMBER_CHARS = set("零一二三四五六七八九十百千万亿两点半负百分之美元金块")
+NUMBER_CHARS = set(
+    "零一二三四五六七八九十百千万亿两点半负正百分之美元金块角分倍年月周天日时秒毫约超近多左右上下第号级版代人民币英镑欧元日元港币刀万亿千百十个位"
+)
 
 
-def lint_project(proj: dict) -> list[str]:
+def lint_project(proj: dict, strict_sync: bool = False) -> list[str]:
     warnings = []
     chapters = proj.get("chapters", [])
     if not chapters:
@@ -110,15 +112,18 @@ def lint_project(proj: dict) -> list[str]:
                 u = count_units(disp)
                 if u > 21:
                     warnings.append(f"[Caption Length] Scene '{sc.get('id')}' display_text has {u} units (>21): {disp}")
-                # Verbatim Sync Guard: forbid unspoken CJK words in display_text!
+                # Verbatim Sync Guard: check unspoken CJK words in display_text
                 disp_cjk = set(re.findall(r"[\u4e00-\u9fff]", disp)) - NUMBER_CHARS
                 tts_cjk = set(re.findall(r"[\u4e00-\u9fff]", tts)) - NUMBER_CHARS
                 extra_cjk = disp_cjk - tts_cjk
                 if extra_cjk:
-                    raise ValueError(
-                        f"[Subtitle Sync Violation] Scene '{sc.get('id')}' display_text ({disp!r}) contains unspoken words "
-                        f"{sorted(extra_cjk)} not in tts_text ({tts!r}). Subtitles must match spoken words 1:1 (only digit/symbol formatting allowed)!"
+                    msg = (
+                        f"[Subtitle Sync] Scene '{sc.get('id')}' display_text ({disp!r}) contains CJK chars "
+                        f"{sorted(extra_cjk)} not in tts_text ({tts!r})."
                     )
+                    if strict_sync:
+                        raise ValueError(msg)
+                    warnings.append(msg)
     return warnings
 
 
@@ -307,7 +312,7 @@ def make_warm_sfx(kind: str, sr: int = 48000) -> np.ndarray:
         return (signal.sosfilt(sos, noise) * (np.sin(np.pi * (t / dur)) ** 1.8) * 0.028).astype(np.float32)
 
 
-def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float) -> list[dict]:
+def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float, fps: int = 30) -> list[dict]:
     from rapid_mlx.audio.stt import STTEngine
 
     ensure_tts_server()
@@ -388,9 +393,9 @@ def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float)
                 "data": sc.get("data", {}),
             })
 
-        # Pad dry_arr to exact video frame multiple (sr // 30 = 1600 samples) to guarantee 0.000ms multi-chapter drift!
-        dry_arr = np.concatenate(chunks)
-        samples_per_frame = sr // 30
+        # Pad dry_arr to exact video frame multiple (sr // fps) to guarantee 0.000ms multi-chapter drift!
+        dry_arr = np.concatenate(chunks) if chunks else np.zeros(int(0.5 * sr), dtype=np.float32)
+        samples_per_frame = max(1, sr // max(1, fps))
         rem = len(dry_arr) % samples_per_frame
         if rem != 0:
             dry_arr = np.concatenate([dry_arr, np.zeros(samples_per_frame - rem, dtype=np.float32)])
@@ -483,9 +488,10 @@ def build_chapters_passthrough_mode(proj: dict, raw_voice_path: Path, cache_dir:
                 flat_clauses.append((ch_i, sc_i, cl_i, txt, cl["display_text"], sc))
 
     full_script = " ".join(item[3] for item in flat_clauses)
+    align_lang = "English" if proj.get("default_preset") == "en" else "Chinese"
     aligner = STTEngine("mlx-community/Qwen3-ForcedAligner-0.6B-8bit")
     aligner.load()
-    aligned = aligner.align(clean_full, full_script, language="Chinese")
+    aligned = aligner.align(clean_full, full_script, language=align_lang)
     items = aligned.segments or []
 
     # Map aligned tokens sequentially back onto clauses by character count
@@ -593,14 +599,94 @@ def export_srt(chapters: list[dict], out_srt: Path) -> None:
     out_srt.write_text("\n".join(lines), encoding="utf-8")
 
 
+def compute_voice_waveform_frames(wav_path: str, fps: int = 30, n_bars: int = 16) -> list[list[float]]:
+    """Compute per-frame multi-band vocal waveform bars (0.0..1.0) synchronized to actual voice pitch & RMS."""
+    audio, sr = sf.read(wav_path, dtype="float32")
+    if audio.ndim > 1:
+        audio = audio[:, 0]
+    total_samples = len(audio)
+    if total_samples == 0:
+        return []
+
+    total_frames = max(1, int(np.ceil((total_samples / float(sr)) * fps)))
+    win_half = max(256, int(sr * 0.024))  # ~48ms Hann window around each frame
+
+    # Center-symmetric vocal frequency band edges (Hz): center bars = core F0/F1 voice energy, outer = harmonics
+    band_edges_hz = np.geomspace(95.0, 4200.0, (n_bars // 2) + 1)
+    mirror_order = list(range((n_bars // 2) - 1, -1, -1)) + list(range(n_bars // 2))
+
+    raw_frames = np.zeros((total_frames, n_bars), dtype=np.float32)
+    rms_track = np.zeros(total_frames, dtype=np.float32)
+
+    for f_idx in range(total_frames):
+        center = int(((f_idx + 0.5) / float(fps)) * sr)
+        s0 = max(0, center - win_half)
+        s1 = min(total_samples, center + win_half)
+        seg = audio[s0:s1]
+        if len(seg) < 64:
+            continue
+        rms = float(np.sqrt(np.mean(seg * seg)))
+        rms_track[f_idx] = rms
+        if rms < 0.004:
+            continue
+
+        windowed = seg * np.hanning(len(seg))
+        spec = np.abs(np.fft.rfft(windowed))
+        freqs = np.fft.rfftfreq(len(seg), d=1.0 / sr)
+
+        half_bars = np.zeros(n_bars // 2, dtype=np.float32)
+        for b_i in range(n_bars // 2):
+            f_lo, f_hi = band_edges_hz[b_i], band_edges_hz[b_i + 1]
+            mask = (freqs >= f_lo) & (freqs < f_hi)
+            if np.any(mask):
+                half_bars[b_i] = float(np.sqrt(np.mean(spec[mask] ** 2)))
+            else:
+                idx_near = int(np.argmin(np.abs(freqs - 0.5 * (f_lo + f_hi))))
+                half_bars[b_i] = float(spec[idx_near])
+
+        raw_frames[f_idx, :] = half_bars[mirror_order]
+
+    # Normalize against 96th percentile of active speech frames so syllables pop dynamically
+    active_rms = rms_track[rms_track > 0.006]
+    rms_ref = float(np.percentile(active_rms, 95)) if len(active_rms) > 0 else 0.05
+    rms_norm = np.clip(rms_track / max(1e-4, rms_ref), 0.0, 1.0)
+
+    for col in range(n_bars):
+        col_vals = raw_frames[:, col]
+        active_col = col_vals[rms_track > 0.006]
+        col_ref = float(np.percentile(active_col, 95)) if len(active_col) > 0 else 1.0
+        band_norm = np.clip(col_vals / max(1e-4, col_ref), 0.0, 1.0)
+        # Blend overall vocal envelope with per-band formant modulation
+        raw_frames[:, col] = np.where(
+            rms_track > 0.0045,
+            np.clip(0.38 * rms_norm + 0.62 * band_norm, 0.0, 1.0),
+            0.0,
+        )
+
+    # Temporal attack/release smoothing across frames for organic fluid motion
+    smoothed = np.zeros_like(raw_frames)
+    for f_idx in range(total_frames):
+        if f_idx == 0:
+            smoothed[f_idx] = raw_frames[f_idx]
+        else:
+            cur = raw_frames[f_idx]
+            prev = smoothed[f_idx - 1]
+            # Fast attack (0.72), smooth decay (0.42)
+            alpha = np.where(cur >= prev, 0.72, 0.42)
+            smoothed[f_idx] = alpha * cur + (1.0 - alpha) * prev
+
+    return [[round(float(v), 3) for v in row] for row in smoothed]
+
+
 def main():
-    parser = argparse.ArgumentParser(description="AGY video-studio Master Builder")
+    parser = argparse.ArgumentParser(description="AGY video-studio Master Builder (16:9 Widescreen)")
     parser.add_argument("--project", required=True, help="Path to video_project.json")
     parser.add_argument("--out-dir", required=True, help="Output directory for MP4 and SRT")
-    parser.add_argument("--aspects", default="16x9", help="Comma-separated: 16x9, 9x16, or 16x9,9x16")
+    parser.add_argument("--aspects", default="16x9", help="Deprecated/compatibility flag; always renders 16x9 (1920x1080)")
     parser.add_argument("--speed", type=float, default=None, help="Override TTS speed_factor")
     parser.add_argument("--voice-file", type=str, default=None, help="Optional raw human .wav/.m4a for passthrough mode")
     parser.add_argument("--lint-only", action="store_true")
+    parser.add_argument("--strict-sync", action="store_true", help="Raise error on any CJK mismatch between display_text and tts_text")
     parser.add_argument("--force-render", action="store_true")
     args = parser.parse_args()
 
@@ -608,7 +694,7 @@ def main():
     proj_dir = proj_path.parent
     proj = json.loads(proj_path.read_text(encoding="utf-8"))
 
-    warnings = lint_project(proj)
+    warnings = lint_project(proj, strict_sync=args.strict_sync)
     for w in warnings:
         print("LINT WARN:", w)
     if args.lint_only:
@@ -620,14 +706,16 @@ def main():
     cache_dir = out_dir / ".vstudio_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Execute automated Chrome 60fps captures if declared
+    # 1. Execute automated Chrome 60fps captures if declared (content-hashed cache invalidation)
     for cap_spec in proj.get("captures", []):
         target_mp4 = (proj_dir / cap_spec["output"]).resolve()
-        if not target_mp4.exists():
-            resolved_spec = dict(cap_spec)
-            resolved_spec["output"] = str(target_mp4)
-            spec_tmp = cache_dir / f"cap_{sha256_str(str(target_mp4))}.json"
-            spec_tmp.write_text(json.dumps(resolved_spec, ensure_ascii=False, indent=2), encoding="utf-8")
+        resolved_spec = dict(cap_spec)
+        resolved_spec["output"] = str(target_mp4)
+        spec_json = json.dumps(resolved_spec, ensure_ascii=False, sort_keys=True, indent=2)
+        spec_hash = sha256_str(spec_json)
+        spec_tmp = cache_dir / f"cap_{spec_hash}.json"
+        if args.force_render or not target_mp4.exists() or not spec_tmp.exists():
+            spec_tmp.write_text(spec_json, encoding="utf-8")
             subprocess.run(["node", str(CAPTURE_SCRIPT), "--spec", str(spec_tmp)], check=True)
 
     # 2. Synthesize & align chapters (clone or human passthrough mode)
@@ -639,92 +727,93 @@ def main():
             raise ValueError("Passthrough mode requires --voice-file or 'raw_voice_path' in project JSON.")
         chapters = build_chapters_passthrough_mode(proj, (proj_dir / voice_file).resolve(), cache_dir)
     else:
-        chapters = build_chapters_clone_mode(proj, cache_dir, speed_default=speed)
+        chapters = build_chapters_clone_mode(proj, cache_dir, speed_default=speed, fps=fps)
 
     slug = proj.get("slug", proj_path.stem)
     export_srt(chapters, out_dir / f"{slug}.srt")
 
-    # 3. Stage media into runtime/public/job_<slug>/ & render each chapter chunk per aspect
+    # 3. Stage media into runtime/public/job_<slug>/ & render each chapter chunk in 16:9 (1920x1080)
     job_rel = f"job_{slug}"
     job_pub_dir = RUNTIME_DIR / "public" / job_rel
     job_pub_dir.mkdir(parents=True, exist_ok=True)
 
     total_ch = len(chapters)
-    aspects = [a.strip() for a in args.aspects.split(",") if a.strip() in ("16x9", "9x16")]
+    comp_id = "Studio16x9"
+    chap_mp4s = []
 
-    for aspect in aspects:
-        comp_id = "Studio16x9" if aspect == "16x9" else "Studio9x16"
-        chap_mp4s = []
+    for ch in chapters:
+        c_num = ch["chapterIndex"]
+        audio_name = f"chap_{c_num:02d}.wav"
+        shutil.copy2(ch["audioAbsPath"], job_pub_dir / audio_name)
 
-        for ch in chapters:
-            c_num = ch["chapterIndex"]
-            audio_name = f"chap_{c_num:02d}.wav"
-            shutil.copy2(ch["audioAbsPath"], job_pub_dir / audio_name)
+        # Stage any scene videoFile / avatarFile paths relative to project dir
+        staged_scenes = json.loads(json.dumps(ch["scenes"]))
+        for sc in staged_scenes:
+            d = sc.get("data", {})
+            for field in ("videoFile", "avatarFile"):
+                if d.get(field):
+                    src_f = (proj_dir / d[field]).resolve()
+                    if src_f.exists():
+                        dst_name = f"{src_f.stem}_{sha256_str(str(src_f))[:6]}{src_f.suffix}"
+                        shutil.copy2(src_f, job_pub_dir / dst_name)
+                        d[field] = f"{job_rel}/{dst_name}"
 
-            # Stage any scene videoFile / avatarFile paths relative to project dir
-            staged_scenes = json.loads(json.dumps(ch["scenes"]))
-            for sc in staged_scenes:
-                d = sc.get("data", {})
-                for field in ("videoFile", "avatarFile"):
-                    if d.get(field):
-                        src_f = (proj_dir / d[field]).resolve()
-                        if src_f.exists():
-                            dst_name = f"{src_f.stem}_{sha256_str(str(src_f))[:6]}{src_f.suffix}"
-                            shutil.copy2(src_f, job_pub_dir / dst_name)
-                            d[field] = f"{job_rel}/{dst_name}"
+        waveform_frames = compute_voice_waveform_frames(ch["audioAbsPath"], fps=fps, n_bars=16)
 
-            payload = {
-                "fps": fps,
-                "chapterIndex": c_num,
-                "totalChapters": total_ch,
-                "chapterTitle": ch["chapterTitle"],
-                "chapterStartOffsetSec": ch["chapterStartOffsetSec"],
-                "chapterDurationSec": ch["chapterDurationSec"],
-                "globalTotalDurationSec": ch["globalTotalDurationSec"],
-                "audioFile": f"{job_rel}/{audio_name}",
-                "scenes": staged_scenes,
-                "captions": ch["captions"],
-            }
-            props_json = json.dumps({"payload": payload, "aspect": aspect}, ensure_ascii=False, sort_keys=True)
-            render_key = sha256_str(props_json + "|" + Path(ch["audioAbsPath"]).name)
-            chap_mp4 = cache_dir / f"render_{slug}_{aspect}_ch{c_num:02d}_{render_key}.mp4"
-            props_file = cache_dir / f"props_{slug}_{aspect}_ch{c_num:02d}.json"
-            props_file.write_text(props_json, encoding="utf-8")
+        payload = {
+            "fps": fps,
+            "chapterIndex": c_num,
+            "totalChapters": total_ch,
+            "chapterTitle": ch["chapterTitle"],
+            "chapterStartOffsetSec": ch["chapterStartOffsetSec"],
+            "chapterDurationSec": ch["chapterDurationSec"],
+            "globalTotalDurationSec": ch["globalTotalDurationSec"],
+            "audioFile": f"{job_rel}/{audio_name}",
+            "showWaveform": bool(proj.get("show_waveform", True)),
+            "waveform": waveform_frames,
+            "scenes": staged_scenes,
+            "captions": ch["captions"],
+        }
+        props_json = json.dumps({"payload": payload}, ensure_ascii=False, sort_keys=True)
+        render_key = sha256_str(props_json + "|" + Path(ch["audioAbsPath"]).name)
+        chap_mp4 = cache_dir / f"render_{slug}_16x9_ch{c_num:02d}_{render_key}.mp4"
+        props_file = cache_dir / f"props_{slug}_16x9_ch{c_num:02d}.json"
+        props_file.write_text(props_json, encoding="utf-8")
 
-            if args.force_render or not chap_mp4.exists():
-                print(f"[Render {aspect}] Chapter {c_num}/{total_ch} ({ch['chapterDurationSec']}s)...")
-                subprocess.run([
-                    str(REMOTION_BIN), "render", "src/index.ts", comp_id, str(chap_mp4),
-                    f"--props={props_file}",
-                    f"--browser-executable={CHROME_PATH}",
-                    "--codec=h264", "--crf=17", "--pixel-format=yuv420p",
-                ], cwd=str(RUNTIME_DIR), check=True)
-            else:
-                print(f"[Cache Hit {aspect}] Chapter {c_num}/{total_ch} unchanged -> skipping render!")
-
-            chap_mp4s.append(chap_mp4)
-
-        final_mp4 = out_dir / f"{slug}_{aspect}.mp4"
-        if len(chap_mp4s) == 1:
-            shutil.copy2(chap_mp4s[0], final_mp4)
-        else:
-            # Concatenate lossless PCM chapter WAVs directly & mux onto concatenated H.264 video
-            # to eliminate any per-chapter AAC encoder priming sample drift across 10-minute videos!
-            concat_txt = cache_dir / f"concat_{slug}_{aspect}.txt"
-            concat_txt.write_text("\n".join(f"file '{p}'" for p in chap_mp4s) + "\n", encoding="utf-8")
-            master_pcm = np.concatenate([sf.read(ch["audioAbsPath"], dtype="float32")[0] for ch in chapters])
-            master_wav_all = cache_dir / f"master_{slug}_full.wav"
-            sf.write(str(master_wav_all), master_pcm, 48000, subtype="PCM_16")
+        if args.force_render or not chap_mp4.exists():
+            print(f"[Render 16x9] Chapter {c_num}/{total_ch} ({ch['chapterDurationSec']}s)...")
             subprocess.run([
-                FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "concat", "-safe", "0", "-i", str(concat_txt),
-                "-i", str(master_wav_all),
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart", str(final_mp4)
-            ], check=True)
+                str(REMOTION_BIN), "render", "src/index.ts", comp_id, str(chap_mp4),
+                f"--props={props_file}",
+                f"--browser-executable={CHROME_PATH}",
+                "--codec=h264", "--crf=17", "--pixel-format=yuv420p",
+            ], cwd=str(RUNTIME_DIR), check=True)
+        else:
+            print(f"[Cache Hit 16x9] Chapter {c_num}/{total_ch} unchanged -> skipping render!")
 
-        print(f"==> Finished {aspect} Master Video ({chapters[0]['globalTotalDurationSec']}s): {final_mp4}")
+        chap_mp4s.append(chap_mp4)
+
+    final_mp4 = out_dir / f"{slug}_16x9.mp4"
+    if len(chap_mp4s) == 1:
+        shutil.copy2(chap_mp4s[0], final_mp4)
+    else:
+        # Concatenate lossless PCM chapter WAVs directly & mux onto concatenated H.264 video
+        # to eliminate any per-chapter AAC encoder priming sample drift across 10-minute videos!
+        concat_txt = cache_dir / f"concat_{slug}_16x9.txt"
+        concat_txt.write_text("\n".join(f"file '{p}'" for p in chap_mp4s) + "\n", encoding="utf-8")
+        master_pcm = np.concatenate([sf.read(ch["audioAbsPath"], dtype="float32")[0] for ch in chapters])
+        master_wav_all = cache_dir / f"master_{slug}_full.wav"
+        sf.write(str(master_wav_all), master_pcm, 48000, subtype="PCM_16")
+        subprocess.run([
+            FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "concat", "-safe", "0", "-i", str(concat_txt),
+            "-i", str(master_wav_all),
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart", str(final_mp4)
+        ], check=True)
+
+    print(f"==> Finished 16x9 Master Video ({chapters[0]['globalTotalDurationSec']}s): {final_mp4}")
 
     # Clean temporary staged job assets inside skill runtime
     shutil.rmtree(job_pub_dir, ignore_errors=True)

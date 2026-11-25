@@ -21,8 +21,9 @@ At the empirically verified comfort cadence (`340~355` Chinese characters + Engl
 - **8–12 Minute Deep-Dive Video**: `2,750 ~ 4,150` units &rarr; **8 ~ 12 Chapters** (`50~60s` per chapter, `50 ~ 75` scenes total)
 
 ### 2.2 Four Mandatory Anti-Fatigue Laws for Long Videos (`> 2 Minutes`)
-1. **Macro Chapter Reset Every `45~60s`**:
-   Every chapter after Chapter 1 MUST open with a high-whitespace (`≥82%`) `chapter_card` posing a sharp conversational question (e.g., *"既然算力成本是零，为什么它首周流水还不到一千美金？"*), paired with `chapter_tail_pause_ms: 600` at the end of the preceding chapter so the viewer's brain gets a clean breath reset.
+1. **Flexible Cold Open (`ch1_s1`) + Macro Chapter Reset Every `45~60s`**:
+   - **Cold Open (`ch1_s1`) is NOT fixed**: Choose the best opening primitive for the story's strongest hook (`dot_matrix_stat` for shocking numbers, `live_web_showcase` for visual product reveal, `evidence_clip` for document/clause forensics, `persona_quote` for authority/founder thesis, `focus_hud_demo` for concrete UX pain points, or `chapter_card` for a sharp contrarian question).
+   - **Chapter 2+ Reset**: Every chapter after Chapter 1 should open with a high-whitespace `chapter_card`, `persona_quote`, or `evidence_clip` posing a sharp conversational question (e.g., *"既然算力成本是零，为什么它首周流水还不到一千美金？"*), paired with `chapter_tail_pause_ms: 600` at the end of the preceding chapter so the viewer's brain gets a clean breath reset.
 2. **Zero Adjacent Primitive Repeats**:
    Never use `flow_3node` twice in a row or `ranked_bars` twice in a row. Rotate across all 10 primitives (`build_video.py --lint-only` automatically audits this).
 3. **Dual Voice-Anchor Modulation (`mix` ↔ `zh`)**:

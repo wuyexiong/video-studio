@@ -1,22 +1,23 @@
 ---
 name: video-studio
 description: >-
-  End-to-end automated video production studio (15s shorts up to 3-15+ minute
-  deep-dive videos) in a warm matte editorial style (#262626 high-whitespace
-  canvas, dual-frequency pacing, zero AI-PPT blue neon). Supports 5 content
-  archetypes: product teardowns, YouTube secondary explainers, tech/science
-  animations, GitHub repo deep-dives, and hands-on product reviews. Integrates
-  dual-mode voiceover (personal GPT-SoVITS voice clone on 127.0.0.1:9880 or
-  raw human recording auto-cleanup), Qwen3-ForcedAligner millisecond alignment,
-  60fps Chrome dynamic web capture, 10 Remotion primitives, chapter-chunked
-  incremental rendering, and dual-aspect (16:9 & 9:16) MP4 + SRT output. Use
-  whenever the user invokes /video-studio or asks to turn a report, URL, GitHub
-  repo, YouTube video/SRT, or draft script into a video.
+  End-to-end automated 16:9 widescreen video production studio (15s shorts up to
+  3-15+ minute deep-dive videos) in a warm matte editorial style (#262626
+  high-whitespace canvas, dual-frequency pacing, zero AI-PPT blue neon).
+  Supports 5 content archetypes: product teardowns, YouTube secondary
+  explainers, tech/science animations, GitHub repo deep-dives, and hands-on
+  product reviews. Integrates dual-mode voiceover (personal GPT-SoVITS voice
+  clone on 127.0.0.1:9880 or raw human recording auto-cleanup),
+  Qwen3-ForcedAligner millisecond alignment, 60fps Chrome dynamic web capture,
+  10 Remotion primitives, chapter-chunked incremental rendering, and 16:9
+  (1920x1080) MP4 + SRT output. Use whenever the user invokes /video-studio or
+  asks to turn a report, URL, GitHub repo, YouTube video/SRT, or draft script
+  into a video.
 ---
 
 # Video Studio (`video-studio`)
 
-Turn any research artifact, product teardown HTML, YouTube transcript, GitHub repository, technical concept, or rough voice/text draft into a broadcast-ready `16:9` (YouTube / Bilibili / X) and/or `9:16` (Shorts / Reels / 抖音 / 视频号 / 小红书) video using the user's signature **Warm Matte Editorial (`#262626`)** visual language and personal cloned voice.
+Turn any research artifact, product teardown HTML, YouTube transcript, GitHub repository, technical concept, or rough voice/text draft into a broadcast-ready `16:9` (`1920×1080`, YouTube / Bilibili / X / 小红书横屏 / 视频号横屏) video using the user's signature **Warm Matte Editorial (`#262626`)** visual language and personal cloned voice.
 
 ---
 
@@ -31,7 +32,7 @@ Turn any research artifact, product teardown HTML, YouTube transcript, GitHub re
    - **NO `#0f172a` cyber-blue neon glassmorphism cards**: Canvas is locked to neutral warm charcoal `#262626` (`≥75%` whitespace) + `#303030` `1px` `#454548` hairline cards + `≤4%` `#F59E0B` warm amber accent.
    - **NO static screenshots pretending to be video**: Any webpage/simulator hold `>2s` must be recorded as a real `60fps` Chrome stream via [capture_web.mjs](./scripts/capture_web.mjs) or use dynamic vector primitives.
    - **NO single outer frame locked for the whole video**: Never repeat the same `primitive` in two consecutive scenes (`scene[i].primitive != scene[i-1].primitive`).
-   - **NO bouncing karaoke captions or robotic long sentences**: Each clause must be `8~16` spoken units (hard cap `19`). **CRITICAL SUBTITLE SYNC LAW**: `display_text` MUST match the spoken `tts_text` **1:1 word-for-word**! Only pure numeral/currency formatting is permitted (`"十五种"` <-> `"15 种"`, `"一千美金"` <-> `"$1,000"`). NEVER paraphrase or insert unspoken words in `display_text` (`build_video.py` enforces a hard CI check and rejects unspoken CJK words).
+   - **NO bouncing karaoke captions or robotic long sentences**: Each clause must be `8~16` spoken units (hard cap `19`). **CRITICAL SUBTITLE SYNC LAW**: `display_text` MUST match the spoken `tts_text` **1:1 word-for-word**! Only pure numeral/currency/unit formatting is permitted (`"十五种"` <-> `"15 种"`, `"一千美金"` <-> `"$1,000"`). NEVER paraphrase or insert unspoken words in `display_text`.
 
 ---
 
@@ -54,7 +55,8 @@ Read [primitives-and-schema.md](./references/primitives-and-schema.md) for the e
 
 Key authoring rules for **3~15 Minute Long Videos**:
 - Partition into **chapters of `35~65 seconds` each** (`5~8 scenes` per chapter, ~`180~350` spoken units per chapter at `~345 CPM`).
-- Start every new chapter (from Chapter 2 onward) with a `chapter_card` or `persona_quote` / `evidence_clip` to reset viewer attention, and switch `preset` between `"mix"` (energetic bilingual demo/tech explanation) and `"zh"` (grounded narrative reflection/takeaways).
+- **Diverse Cold Open Hooks (`ch1_s1`)**: Never mechanically reuse the same opening primitive across videos. Pick the best hook primitive for the specific story (`dot_matrix_stat` for shocking numbers, `live_web_showcase` for eye-catching web UI, `evidence_clip` for paper/policy forensics, `persona_quote` for iconic quotes, `focus_hud_demo` for workflow friction, or `chapter_card` for a bold contrarian thesis).
+- Start every new chapter (from Chapter 2 onward) with a `chapter_card`, `persona_quote`, or `evidence_clip` to reset viewer attention, and switch `preset` between `"mix"` (energetic bilingual demo/tech explanation) and `"zh"` (grounded narrative reflection/takeaways).
 - Lint your JSON before rendering:
   ```bash
   /opt/homebrew/Cellar/rapid-mlx/1.0.2/libexec/bin/python \
@@ -72,8 +74,7 @@ Run [build_video.py](./scripts/build_video.py) (`BypassSandbox: true` required f
   /opt/homebrew/Cellar/rapid-mlx/1.0.2/libexec/bin/python \
     /Users/hahaxiong/.gemini/config/skills/video-studio/scripts/build_video.py \
     --project ./video_project.json \
-    --out-dir ./video_output \
-    --aspects 16x9,9x16
+    --out-dir ./video_output
   ```
 - **Mode B — Raw Human Voice Recording Passthrough (`.wav/.m4a`)**:
   ```bash
@@ -81,8 +82,7 @@ Run [build_video.py](./scripts/build_video.py) (`BypassSandbox: true` required f
     /Users/hahaxiong/.gemini/config/skills/video-studio/scripts/build_video.py \
     --project ./video_project.json \
     --out-dir ./video_output \
-    --voice-file ./my_raw_recording.m4a \
-    --aspects 16x9,9x16
+    --voice-file ./my_raw_recording.m4a
   ```
 
 > **Incremental Fast Rebuild**: `build_video.py` caches every clause WAV, forced-alignment JSON, and rendered chapter MP4 by SHA-256 content hash inside `./video_output/.vstudio_cache/`. Revising one sentence in a 10-minute video only re-synthesizes that single clause and re-renders that single chapter (`~15s`), then stitches all chapters losslessly via `ffmpeg -f concat -c copy` in `<0.5s`!
@@ -90,5 +90,5 @@ Run [build_video.py](./scripts/build_video.py) (`BypassSandbox: true` required f
 ### Step 4: Post-Render Audio-Visual QA Verification
 Before delivering files to the user:
 1. Verify output streams, duration, and EBU R128 loudness (`~ -16.5 LUFS`) with `/opt/homebrew/bin/ffprobe`.
-2. Extract 4~6 sample frames across chapters with `/opt/homebrew/bin/ffmpeg` and visually inspect them with `read_file` to confirm zero text overflow, clean `≥72%` whitespace, and proper `16:9` / `9:16` safe-zone alignment.
-3. Deliver clickable `file://` links to `<slug>_16x9.mp4`, `<slug>_9x16.mp4`, and `<slug>.srt`.
+2. Extract 4~6 sample frames across chapters with `/opt/homebrew/bin/ffmpeg` and visually inspect them with `read_file` to confirm zero text overflow, clean `≥72%` whitespace, and proper `16:9` (`1920×1080`) safe-zone alignment.
+3. Deliver clickable `file://` links to `<slug>_16x9.mp4` and `<slug>.srt`.

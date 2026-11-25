@@ -62,6 +62,8 @@ export interface ChapterRenderPayload {
   chapterDurationSec: number;
   globalTotalDurationSec: number;
   audioFile: string; // filename inside runtime/public/render_job/
+  showWaveform?: boolean;
+  waveform?: number[][];
   scenes: StudioScene[];
   captions: ClauseTiming[];
 }
@@ -114,7 +116,7 @@ function getBeatFrame(scene: StudioScene, clauseIdx: number, fps: number, fallba
 }
 
 // 1. chapter_card — High-Whitespace Editorial Chapter / Punch Card (85% Whitespace)
-const PrimitiveChapterCard: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveChapterCard: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
@@ -127,8 +129,8 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene; isVertical: boolean }
   const pEnter = spring({ frame: frame - 14, fps, config: SPRING_SNAPPY });
 
   return (
-    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: isVertical ? '0 72px' : '0 160px' }}>
-      <div style={{ display: 'flex', alignItems: 'stretch', gap: 30, maxWidth: isVertical ? 920 : 1280, transform: 'translateY(-24px)' }}>
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: '0 160px' }}>
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: 30, maxWidth: 1280, transform: 'translateY(-24px)' }}>
         <div
           style={{
             width: 6,
@@ -147,7 +149,7 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene; isVertical: boolean }
           )}
           <div
             style={{
-              fontSize: isVertical ? 58 : 70,
+              fontSize: 70,
               fontWeight: 800,
               color: TOKENS.ink,
               lineHeight: 1.2,
@@ -161,7 +163,7 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene; isVertical: boolean }
           {d.subheadline && (
             <div
               style={{
-                fontSize: isVertical ? 48 : 56,
+                fontSize: 56,
                 fontWeight: 800,
                 color: accent,
                 lineHeight: 1.24,
@@ -201,7 +203,7 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene; isVertical: boolean }
 };
 
 // 2. persona_quote — Speaker / Founder Avatar Shift + Role Pills + Quote
-const PrimitivePersonaQuote: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
@@ -213,13 +215,13 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene; isVertical: boolean 
   const quoteEnter = spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY });
 
   return (
-    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: isVertical ? '0 64px' : '0 160px' }}>
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: '0 160px' }}>
       <div
         style={{
           display: 'flex',
-          flexDirection: isVertical ? 'column' : 'row',
+          flexDirection: 'row',
           alignItems: 'center',
-          gap: isVertical ? 36 : 56,
+          gap: 56,
           transform: 'translateY(-24px)',
         }}
       >
@@ -274,7 +276,7 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene; isVertical: boolean 
         </div>
 
         {/* Right Progressive Pills + Quote Card */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: isVertical ? 880 : 780 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 780 }}>
           {badges.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
               {badges.map((b, idx) => {
@@ -315,7 +317,7 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene; isVertical: boolean 
               <div style={{ fontFamily: TOKENS.fontMono, fontSize: 44, lineHeight: 0.8, color: TOKENS.amber, marginBottom: 8 }}>
                 “
               </div>
-              <div style={{ fontSize: isVertical ? 34 : 36, fontWeight: 700, color: TOKENS.ink, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 36, fontWeight: 700, color: TOKENS.ink, lineHeight: 1.4 }}>
                 {d.quote}
               </div>
               {d.source && (
@@ -332,12 +334,12 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene; isVertical: boolean 
 };
 
 // 3. dot_matrix_stat — Proportion Dot Grid + Big Monospace Metric (1,000 -> 0.2% style)
-const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const cols = isVertical ? 15 : 20;
-  const rows = isVertical ? 10 : 10;
+  const cols = 20;
+  const rows = 10;
   const totalDots = cols * rows;
   const activeCount = Math.max(1, Math.min(totalDots, Number(d.highlightDots ?? 4)));
   const pal = tonePalette(d.tone || 'amber');
@@ -352,9 +354,9 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene; isVertical: boolean
       <div
         style={{
           display: 'flex',
-          flexDirection: isVertical ? 'column' : 'row',
+          flexDirection: 'row',
           alignItems: 'center',
-          gap: isVertical ? 44 : 84,
+          gap: 84,
           transform: 'translateY(-22px)',
         }}
       >
@@ -394,12 +396,12 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene; isVertical: boolean
           style={{
             display: 'flex',
             flexDirection: 'column',
-            alignItems: isVertical ? 'center' : 'flex-start',
+            alignItems: 'flex-start',
             opacity: statEnter,
             transform: `translateY(${interpolate(statEnter, [0, 1], [22, 0])}px)`,
           }}
         >
-          <div style={{ fontFamily: TOKENS.fontMono, fontSize: isVertical ? 96 : 108, fontWeight: 800, color: pal.fg, lineHeight: 1 }}>
+          <div style={{ fontFamily: TOKENS.fontMono, fontSize: 108, fontWeight: 800, color: pal.fg, lineHeight: 1 }}>
             {d.metricValue || '0.2%'}
           </div>
           <div style={{ fontSize: 32, fontWeight: 700, color: TOKENS.ink, marginTop: 14 }}>
@@ -433,7 +435,7 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene; isVertical: boolean
 };
 
 // 4. flow_3node — Progressive SVG-Connected Architecture / Funnel Flow (2 to 4 Nodes)
-const PrimitiveFlow3Node: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const nodes: Array<{ tag?: string; title: string; subtitle?: string; bigValue?: string; badge?: string; tone?: Tone }> =
@@ -446,9 +448,9 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene; isVertical: boolean }> 
       <div
         style={{
           display: 'flex',
-          flexDirection: isVertical ? 'column' : 'row',
+          flexDirection: 'row',
           alignItems: 'center',
-          gap: isVertical ? 18 : 22,
+          gap: 22,
           transform: 'translateY(-22px)',
         }}
       >
@@ -467,7 +469,7 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene; isVertical: boolean }> 
             <React.Fragment key={idx}>
               <div
                 style={{
-                  width: isVertical ? 800 : Math.min(430, Math.floor(1520 / Math.max(2, nodes.length))),
+                  width: Math.min(430, Math.floor(1520 / Math.max(2, nodes.length))),
                   background: isHighlight ? pal.bg : TOKENS.card,
                   border: `1.5px solid ${isHighlight ? pal.border : TOKENS.border}`,
                   borderLeft: idx === 0 && !isHighlight ? `4px solid ${TOKENS.amber}` : undefined,
@@ -517,16 +519,12 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene; isVertical: boolean }> 
 
               {idx < nodes.length - 1 && (
                 <svg
-                  width={isVertical ? 36 : 74}
-                  height={isVertical ? 48 : 36}
-                  viewBox={isVertical ? '0 0 36 48' : '0 0 74 36'}
+                  width={74}
+                  height={36}
+                  viewBox="0 0 74 36"
                   style={{ opacity: lineP > 0.03 ? 1 : 0, flexShrink: 0 }}
                 >
-                  {isVertical ? (
-                    <line x1="18" y1="4" x2="18" y2={4 + 40 * lineP} stroke={TOKENS.amber} strokeWidth="3.5" strokeLinecap="round" />
-                  ) : (
-                    <line x1="4" y1="18" x2={4 + 66 * lineP} y2="18" stroke={TOKENS.amber} strokeWidth="3.5" strokeLinecap="round" />
-                  )}
+                  <line x1="4" y1="18" x2={4 + 66 * lineP} y2="18" stroke={TOKENS.amber} strokeWidth="3.5" strokeLinecap="round" />
                 </svg>
               )}
             </React.Fragment>
@@ -538,21 +536,21 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene; isVertical: boolean }> 
 };
 
 // 5. matrix_compare — 2 to 3 Column Semantic Matrix (Attack/Defense, Pros/Cons, Competitor Table)
-const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const cols: Array<{ header: string; tone?: Tone; items: Array<{ title: string; detail?: string; badge?: string }> }> =
     Array.isArray(scene.data?.columns) ? scene.data.columns.slice(0, 3) : [];
 
   return (
-    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: isVertical ? '0 56px' : '0 110px' }}>
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: '0 110px' }}>
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: isVertical ? '1fr' : `repeat(${Math.max(1, cols.length)}, 1fr)`,
+          gridTemplateColumns: `repeat(${Math.max(1, cols.length)}, 1fr)`,
           gap: 22,
           width: '100%',
-          maxWidth: isVertical ? 920 : 1640,
+          maxWidth: 1640,
           transform: 'translateY(-22px)',
         }}
       >
@@ -621,7 +619,7 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene; isVertical: boolean
 };
 
 // 6. focus_hud_demo — Dimmed/Blurred Background Context + Foreground Interactive HUD Click
-const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
@@ -631,10 +629,22 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene; isVertical: boolean 
 
   const beat2 = getBeatFrame(scene, 1, fps, 0.45);
   let clickFrame = beat2 + Math.round(0.6 * fps);
-  const kw = String(d.clickKeyword || 'allow');
+  const kw = String(d.clickKeyword || 'allow').toLowerCase();
   if (scene.clauses[1]?.chars?.length) {
-    const found = scene.clauses[1].chars.find((c) => c.text.toLowerCase().includes(kw.toLowerCase()));
-    if (found) clickFrame = Math.max(beat2 + 5, Math.round((found.start - scene.start) * fps));
+    const chList = scene.clauses[1].chars;
+    let joined = '';
+    const charOffsets: Array<{ idx: number; start: number }> = [];
+    for (const c of chList) {
+      charOffsets.push({ idx: joined.length, start: c.start });
+      joined += (c.text || '').toLowerCase();
+    }
+    const matchIdx = joined.indexOf(kw);
+    if (matchIdx >= 0) {
+      const hit = charOffsets.find((o) => o.idx >= matchIdx) || charOffsets[0];
+      if (hit) {
+        clickFrame = Math.max(beat2 + 5, Math.round((hit.start - scene.start) * fps));
+      }
+    }
   }
 
   const focus = spring({ frame: frame - (beat2 - 4), fps, config: SPRING_SNAPPY });
@@ -646,7 +656,7 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene; isVertical: boolean 
       <div
         style={{
           display: 'flex',
-          flexDirection: isVertical ? 'column' : 'row',
+          flexDirection: 'row',
           gap: 22,
           opacity: interpolate(focus, [0, 1], [1, 0.25]),
           filter: `blur(${interpolate(focus, [0, 1], [0, 4.5])}px)`,
@@ -659,7 +669,7 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene; isVertical: boolean 
             <div
               key={i}
               style={{
-                width: isVertical ? 840 : 450,
+                width: 450,
                 background: TOKENS.card,
                 border: `1px solid ${TOKENS.border}`,
                 borderRadius: 16,
@@ -684,14 +694,14 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene; isVertical: boolean 
       <div
         style={{
           position: 'absolute',
-          top: isVertical ? 280 : 140,
+          top: 140,
           opacity: focus,
           transform: `translateY(${interpolate(focus, [0, 1], [-110, 0])}px)`,
         }}
       >
         <div
           style={{
-            width: isVertical ? 880 : 780,
+            width: 780,
             background: '#0E0F12',
             borderRadius: 24,
             border: `1.5px solid ${isClicked ? TOKENS.emeraldBorder : 'rgba(255,255,255,0.18)'}`,
@@ -754,7 +764,7 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene; isVertical: boolean 
 };
 
 // 7. live_web_showcase — True 60fps Video Stream + Footnote + Side Forensic Callout
-const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
@@ -773,13 +783,13 @@ const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene; isVertical: boole
           flexDirection: 'column',
           alignItems: 'center',
           opacity: enter,
-          transform: `translateY(-24px) translateX(${!isVertical && callout ? interpolate(sideEnter, [0, 1], [0, -120]) : 0}px) scale(${interpolate(enter, [0, 1], [0.95, 1])})`,
+          transform: `translateY(-24px) translateX(${callout ? interpolate(sideEnter, [0, 1], [0, -120]) : 0}px) scale(${interpolate(enter, [0, 1], [0.95, 1])})`,
         }}
       >
         <div
           style={{
-            width: isVertical ? 940 : 1120,
-            height: isVertical ? 588 : 700,
+            width: 1120,
+            height: 700,
             borderRadius: 14,
             overflow: 'hidden',
             border: '1px solid rgba(255,255,255,0.16)',
@@ -806,9 +816,9 @@ const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene; isVertical: boole
         <div
           style={{
             position: 'absolute',
-            right: isVertical ? 70 : 110,
-            top: isVertical ? 1010 : 270,
-            width: isVertical ? 940 : 430,
+            right: 110,
+            top: 270,
+            width: 430,
             background: '#272426',
             border: `1.5px solid ${pal.border}`,
             borderRadius: 16,
@@ -839,7 +849,7 @@ const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene; isVertical: boole
 };
 
 // 8. terminal_code_live — Progressive CLI / Code Execution Stream (GitHub & Tech Deep-Dives)
-const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
@@ -854,7 +864,7 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene; isVertical: bool
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div
         style={{
-          width: isVertical ? 940 : 1320,
+          width: 1320,
           background: '#191A1D',
           border: `1px solid ${TOKENS.border}`,
           borderRadius: 16,
@@ -890,7 +900,7 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene; isVertical: bool
                 key={idx}
                 style={{
                   fontFamily: TOKENS.fontMono,
-                  fontSize: isVertical ? 24 : 26,
+                  fontSize: 26,
                   color,
                   background: ln.highlight ? TOKENS.amberSoft : 'transparent',
                   borderLeft: ln.highlight ? `3px solid ${TOKENS.amber}` : '3px solid transparent',
@@ -911,7 +921,7 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene; isVertical: bool
 };
 
 // 9. ranked_bars — Animated Horizontal Bars / Benchmark / Probability Distribution
-const PrimitiveRankedBars: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
@@ -921,7 +931,7 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene; isVertical: boolean }>
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div style={{ width: isVertical ? 900 : 1280, transform: 'translateY(-22px)', display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{ width: 1280, transform: 'translateY(-22px)', display: 'flex', flexDirection: 'column', gap: 24 }}>
         {d.heading && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
             <span style={{ fontSize: 38, fontWeight: 800, color: TOKENS.ink }}>{d.heading}</span>
@@ -954,7 +964,7 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene; isVertical: boolean }>
 };
 
 // 10. evidence_clip — Warm Paper Document / ArXiv / GitHub README Excerpt + Highlighter
-const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene; isVertical: boolean }> = ({ scene, isVertical }) => {
+const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
@@ -972,7 +982,7 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene; isVertical: boolean 
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div
         style={{
-          width: isVertical ? 900 : 1160,
+          width: 1160,
           background: TOKENS.paper,
           color: TOKENS.paperInk,
           borderRadius: 16,
@@ -988,7 +998,7 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene; isVertical: boolean 
           </span>
           <span style={{ fontFamily: TOKENS.fontMono, fontSize: 18, color: '#52525B' }}>{d.docMeta || ''}</span>
         </div>
-        <div style={{ fontSize: isVertical ? 34 : 40, fontWeight: 800, color: '#111113', marginBottom: 22, lineHeight: 1.28 }}>
+        <div style={{ fontSize: 40, fontWeight: 800, color: '#111113', marginBottom: 22, lineHeight: 1.28 }}>
           {d.docTitle || ''}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1016,12 +1026,10 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene; isVertical: boolean 
 
 export const StudioVideo: React.FC<{
   payload: ChapterRenderPayload;
-  aspect: '16x9' | '9x16';
-}> = ({ payload, aspect }) => {
+}> = ({ payload }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const curSec = frame / fps;
-  const isVertical = aspect === '9x16';
 
   const globalCurSec = payload.chapterStartOffsetSec + curSec;
   const globalPct = Math.min(100, (globalCurSec / Math.max(0.1, payload.globalTotalDurationSec)) * 100);
@@ -1040,7 +1048,7 @@ export const StudioVideo: React.FC<{
       <div
         style={{
           position: 'absolute',
-          top: isVertical ? 136 : 0,
+          top: 0,
           left: 0,
           right: 0,
           height: 3.5,
@@ -1055,18 +1063,18 @@ export const StudioVideo: React.FC<{
       <div
         style={{
           position: 'absolute',
-          top: isVertical ? 156 : 20,
-          left: isVertical ? 48 : 34,
+          top: 20,
+          left: 34,
           display: 'flex',
           alignItems: 'center',
           gap: 12,
           zIndex: 50,
         }}
       >
-        <span style={{ fontFamily: TOKENS.fontMono, fontSize: isVertical ? 23 : 20, fontWeight: 800, color: TOKENS.amber }}>
+        <span style={{ fontFamily: TOKENS.fontMono, fontSize: 20, fontWeight: 800, color: TOKENS.amber }}>
           {chapIdxStr}
         </span>
-        <span style={{ fontSize: isVertical ? 23 : 20, fontWeight: 600, color: TOKENS.inkSecondary }}>
+        <span style={{ fontSize: 20, fontWeight: 600, color: TOKENS.inkSecondary }}>
           {payload.chapterTitle}
         </span>
       </div>
@@ -1077,16 +1085,16 @@ export const StudioVideo: React.FC<{
         const durF = Math.max(1, Math.round((sc.end - sc.start) * fps));
         return (
           <Sequence key={sc.id} from={fromF} durationInFrames={durF}>
-            {sc.primitive === 'chapter_card' && <PrimitiveChapterCard scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'persona_quote' && <PrimitivePersonaQuote scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'dot_matrix_stat' && <PrimitiveDotMatrixStat scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'flow_3node' && <PrimitiveFlow3Node scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'matrix_compare' && <PrimitiveMatrixCompare scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'focus_hud_demo' && <PrimitiveFocusHudDemo scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'live_web_showcase' && <PrimitiveLiveWebShowcase scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'terminal_code_live' && <PrimitiveTerminalCodeLive scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'ranked_bars' && <PrimitiveRankedBars scene={sc} isVertical={isVertical} />}
-            {sc.primitive === 'evidence_clip' && <PrimitiveEvidenceClip scene={sc} isVertical={isVertical} />}
+            {sc.primitive === 'chapter_card' && <PrimitiveChapterCard scene={sc} />}
+            {sc.primitive === 'persona_quote' && <PrimitivePersonaQuote scene={sc} />}
+            {sc.primitive === 'dot_matrix_stat' && <PrimitiveDotMatrixStat scene={sc} />}
+            {sc.primitive === 'flow_3node' && <PrimitiveFlow3Node scene={sc} />}
+            {sc.primitive === 'matrix_compare' && <PrimitiveMatrixCompare scene={sc} />}
+            {sc.primitive === 'focus_hud_demo' && <PrimitiveFocusHudDemo scene={sc} />}
+            {sc.primitive === 'live_web_showcase' && <PrimitiveLiveWebShowcase scene={sc} />}
+            {sc.primitive === 'terminal_code_live' && <PrimitiveTerminalCodeLive scene={sc} />}
+            {sc.primitive === 'ranked_bars' && <PrimitiveRankedBars scene={sc} />}
+            {sc.primitive === 'evidence_clip' && <PrimitiveEvidenceClip scene={sc} />}
           </Sequence>
         );
       })}
@@ -1098,7 +1106,7 @@ export const StudioVideo: React.FC<{
             position: 'absolute',
             left: 0,
             right: 0,
-            bottom: isVertical ? 430 : 58,
+            bottom: 58,
             display: 'flex',
             justifyContent: 'center',
             pointerEvents: 'none',
@@ -1109,13 +1117,13 @@ export const StudioVideo: React.FC<{
             style={{
               background: TOKENS.subtitleBg,
               borderRadius: 10,
-              padding: isVertical ? '13px 34px' : '12px 34px',
-              fontSize: isVertical ? 44 : 40,
+              padding: '12px 34px',
+              fontSize: 40,
               fontWeight: 700,
               color: TOKENS.ink,
               letterSpacing: '0.015em',
               boxShadow: '0 8px 24px rgba(0,0,0,0.32)',
-              maxWidth: isVertical ? '88%' : '82%',
+              maxWidth: '72%',
               textAlign: 'center',
             }}
           >
@@ -1123,6 +1131,80 @@ export const StudioVideo: React.FC<{
           </div>
         </div>
       )}
+
+      {/* Bottom-Right Real-Time Voice Waveform HUD */}
+      {payload.showWaveform !== false && Array.isArray(payload.waveform) && payload.waveform.length > 0 && (() => {
+        const wfIdx = Math.min(payload.waveform.length - 1, Math.max(0, frame));
+        const bars = payload.waveform[wfIdx] || [];
+        const avgEnergy = bars.length > 0 ? bars.reduce((a, b) => a + b, 0) / bars.length : 0;
+        const isSpeaking = avgEnergy > 0.045;
+        return (
+          <div
+            style={{
+              position: 'absolute',
+              right: 36,
+              bottom: 58,
+              height: 58,
+              padding: '0 18px',
+              borderRadius: 999,
+              background: 'rgba(18, 18, 20, 0.86)',
+              border: `1px solid ${isSpeaking ? 'rgba(245, 158, 11, 0.42)' : 'rgba(69, 69, 72, 0.75)'}`,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.32)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 11,
+              pointerEvents: 'none',
+              zIndex: 65,
+            }}
+          >
+            {/* Amber Vocal Activity Pulse Dot */}
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 999,
+                background: isSpeaking ? TOKENS.amber : TOKENS.inkMuted,
+                boxShadow: isSpeaking ? `0 0 ${Math.round(6 + avgEnergy * 10)}px ${TOKENS.amber}` : 'none',
+                opacity: isSpeaking ? 0.95 : 0.4,
+                transform: `scale(${isSpeaking ? 1 + avgEnergy * 0.25 : 0.9})`,
+              }}
+            />
+            {/* 16 Symmetric Multi-Band Vocal Bars */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 3.5,
+                height: 36,
+              }}
+            >
+              {bars.map((v, bIdx) => {
+                const clamped = Math.max(0, Math.min(1, v));
+                const barH = Math.round(4 + Math.pow(clamped, 0.82) * 30);
+                const isCenterPeak = clamped > 0.48;
+                const isMidVoice = clamped > 0.14;
+                const barColor = isCenterPeak
+                  ? TOKENS.amber
+                  : isMidVoice
+                  ? TOKENS.ink
+                  : 'rgba(161, 161, 170, 0.38)';
+                return (
+                  <div
+                    key={bIdx}
+                    style={{
+                      width: 3.5,
+                      height: barH,
+                      borderRadius: 999,
+                      background: barColor,
+                      opacity: isCenterPeak ? 1 : isMidVoice ? 0.88 : 0.5,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
     </AbsoluteFill>
   );
 };
