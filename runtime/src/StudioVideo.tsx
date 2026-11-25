@@ -25,7 +25,10 @@ export type PrimitiveType =
   | 'live_web_showcase'
   | 'terminal_code_live'
   | 'ranked_bars'
-  | 'evidence_clip';
+  | 'evidence_clip'
+  | 'skill_editor_spotlight'
+  | 'stack_slice_builder'
+  | 'traffic_gate_box';
 
 export interface CharTiming {
   text: string;
@@ -88,8 +91,8 @@ const TOKENS = {
   coralSoft: 'rgba(239, 83, 80, 0.11)',
   coralBorder: 'rgba(239, 83, 80, 0.45)',
   subtitleBg: 'rgba(15, 15, 16, 0.88)',
-  fontSans: '"PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", -apple-system, BlinkMacSystemFont, sans-serif',
-  fontMono: '"JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace',
+  fontSans: '"Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", sans-serif',
+  fontMono: '"JetBrains Mono", "Noto Sans Mono CJK SC", "MesloLGS NF", ui-monospace, monospace',
 };
 
 const SPRING_SNAPPY = { damping: 22, stiffness: 210, mass: 0.85 };
@@ -110,12 +113,118 @@ function tonePalette(tone: Tone = 'neutral') {
 function getBeatFrame(scene: StudioScene, clauseIdx: number, fps: number, fallbackRatio = 0.48): number {
   const cl = scene.clauses[clauseIdx];
   if (cl) {
-    return Math.max(8, Math.round((cl.start - scene.start) * fps));
+    return Math.max(4, Math.round((cl.start - scene.start) * fps));
   }
-  return Math.max(10, Math.round(scene.duration * fallbackRatio * fps));
+  return Math.max(8, Math.round(scene.duration * fallbackRatio * fps));
 }
 
-// 1. chapter_card — High-Whitespace Editorial Chapter / Punch Card (85% Whitespace)
+function getActiveClauseIdx(scene: StudioScene, frame: number, fps: number): number {
+  const absSec = scene.start + frame / fps;
+  let active = 0;
+  for (let i = 0; i < scene.clauses.length; i++) {
+    if (absSec >= scene.clauses[i].start - 0.08) {
+      active = i;
+    }
+  }
+  return active;
+}
+
+// Universal Top Scene Thesis Header & Context Pill
+const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  if (!d.topPill && !d.topTitle) return null;
+
+  const enter = spring({ frame, fps, config: SPRING_SNAPPY });
+  const accentPal = tonePalette(d.topAccentTone || 'amber');
+  const titleStr = String(d.topTitle || '');
+  const accentWord = String(d.topAccentWord || '');
+
+  const renderTitle = () => {
+    if (!accentWord || !titleStr.includes(accentWord)) {
+      return titleStr;
+    }
+    const parts = titleStr.split(accentWord);
+    return (
+      <>
+        {parts[0]}
+        <span style={{ color: accentPal.fg }}>{accentWord}</span>
+        {parts.slice(1).join(accentWord)}
+      </>
+    );
+  };
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 86,
+        left: 0,
+        right: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 14,
+        zIndex: 40,
+        opacity: enter,
+        transform: `translateY(${interpolate(enter, [0, 1], [-14, 0])}px)`,
+        pointerEvents: 'none',
+      }}
+    >
+      {d.topPill && (
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '10px 26px',
+            borderRadius: 999,
+            background: '#322F2B',
+            border: '1.5px solid rgba(245, 158, 11, 0.35)',
+            fontSize: 24,
+            fontWeight: 800,
+            color: TOKENS.ink,
+            letterSpacing: '0.03em',
+          }}
+        >
+          {d.topPillTag ? (
+            <span
+              style={{
+                padding: '2px 10px',
+                borderRadius: 999,
+                background: TOKENS.amberSoft,
+                color: TOKENS.amber,
+                fontSize: 18,
+                fontWeight: 800,
+              }}
+            >
+              {d.topPillTag}
+            </span>
+          ) : (
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: TOKENS.amber }} />
+          )}
+          <span>{d.topPill}</span>
+        </div>
+      )}
+      {d.topTitle && (
+        <div
+          style={{
+            fontSize: 54,
+            fontWeight: 800,
+            color: TOKENS.ink,
+            letterSpacing: '-0.015em',
+            textAlign: 'center',
+          }}
+        >
+          {renderTitle()}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// 1. chapter_card — High-Whitespace Editorial Chapter / Punch Card (85% Whitespace + Hero Underline Mode)
 const PrimitiveChapterCard: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -126,7 +235,73 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const bar = spring({ frame, fps, config: SPRING_SNAPPY });
   const t1 = spring({ frame: frame - 4, fps, config: SPRING_SNAPPY });
   const t2 = spring({ frame: frame - getBeatFrame(scene, 1, fps, 0.35), fps, config: SPRING_SNAPPY });
-  const pEnter = spring({ frame: frame - 14, fps, config: SPRING_SNAPPY });
+  const pEnter = spring({ frame: frame - getBeatFrame(scene, Math.min(2, scene.clauses.length - 1), fps, 0.55), fps, config: SPRING_SNAPPY });
+
+  if (d.heroUnderlineMode) {
+    return (
+      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28, transform: 'translateY(-12px)' }}>
+          <div style={{ position: 'relative', display: 'inline-block', opacity: t1, transform: `scale(${interpolate(t1, [0, 1], [0.92, 1])})` }}>
+            <div
+              style={{
+                fontFamily: TOKENS.fontMono,
+                fontSize: 118,
+                fontWeight: 800,
+                color: TOKENS.ink,
+                letterSpacing: '-0.02em',
+                lineHeight: 1.1,
+              }}
+            >
+              {d.headline || 'grill-me'}
+            </div>
+            <div
+              style={{
+                marginTop: 10,
+                height: 12,
+                width: `${Math.round(interpolate(bar, [0, 1], [0, 48]))}%`,
+                background: TOKENS.amber,
+                borderRadius: 6,
+              }}
+            />
+          </div>
+          {d.subheadline && (
+            <div
+              style={{
+                fontSize: 38,
+                fontWeight: 700,
+                color: TOKENS.inkSecondary,
+                opacity: t2,
+                transform: `translateY(${interpolate(t2, [0, 1], [14, 0])}px)`,
+              }}
+            >
+              {d.subheadline}
+            </div>
+          )}
+          {pills.length > 0 && (
+            <div style={{ display: 'flex', gap: 20, marginTop: 8, opacity: pEnter, transform: `translateY(${interpolate(pEnter, [0, 1], [16, 0])}px)` }}>
+              {pills.map((p, i) => (
+                <span
+                  key={i}
+                  style={{
+                    padding: '12px 26px',
+                    borderRadius: 14,
+                    background: i === 0 ? TOKENS.amberSoft : TOKENS.card,
+                    border: `1.5px solid ${i === 0 ? TOKENS.amberBorder : TOKENS.border}`,
+                    color: i === 0 ? TOKENS.amber : TOKENS.ink,
+                    fontFamily: TOKENS.fontMono,
+                    fontSize: 26,
+                    fontWeight: 800,
+                  }}
+                >
+                  {p}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </AbsoluteFill>
+    );
+  }
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: '0 160px' }}>

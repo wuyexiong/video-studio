@@ -69,6 +69,9 @@ VALID_PRIMITIVES = {
     "terminal_code_live",
     "ranked_bars",
     "evidence_clip",
+    "skill_editor_spotlight",
+    "stack_slice_builder",
+    "traffic_gate_box",
 }
 
 
