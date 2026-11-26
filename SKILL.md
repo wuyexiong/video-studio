@@ -2,17 +2,18 @@
 name: video-studio
 description: >-
   End-to-end automated 16:9 widescreen video production studio (15s shorts up to
-  3-15+ minute deep-dive videos) in a warm matte editorial style (#262626
-  high-whitespace canvas, dual-frequency pacing, zero AI-PPT blue neon).
+  3-30+ minute deep-dive videos) in a warm matte editorial style (#262626
+  high-whitespace canvas, #323232 cards, #FE8A00 amber accent, zero AI-PPT blue neon).
   Supports 5 content archetypes: product teardowns, YouTube secondary
   explainers, tech/science animations, GitHub repo deep-dives, and hands-on
   product reviews. Integrates dual-mode voiceover (personal GPT-SoVITS voice
-  clone on 127.0.0.1:9880 or raw human recording auto-cleanup),
+  clone on 127.0.0.1:9880 with coherent thought-group prosody & 3-tier semantic pauses,
+  or raw human recording auto-cleanup), podcast-grade LRA 3.5 LU zero-BGM mastering,
   Qwen3-ForcedAligner millisecond alignment, 60fps Chrome dynamic web capture,
-  22 Remotion primitives (100% coverage of multi-beat progressive evolution canvases), chapter-chunked incremental rendering, and 16:9
-  (1920x1080) MP4 + SRT output. Use whenever the user invokes /video-studio or
-  asks to turn a report, URL, GitHub repo, YouTube video/SRT, or draft script
-  into a video.
+  31 domain-agnostic Remotion primitives + connected multi-stage stepper HUD,
+  chapter-chunked incremental rendering, and 16:9 (1920x1080) MP4 + SRT output.
+  Use whenever the user invokes /video-studio or asks to turn a report, URL,
+  GitHub repo, YouTube video/SRT, or draft script into a video.
 ---
 
 # Video Studio (`video-studio`)
@@ -29,10 +30,10 @@ Turn any research artifact, product teardown HTML, YouTube transcript, GitHub re
    - Always invoke Python audio/alignment scripts via `/opt/homebrew/Cellar/rapid-mlx/1.0.2/libexec/bin/python` (requires `BypassSandbox: true` for Apple Metal GPU access and localhost `9880` TTS).
    - Always invoke Chrome via `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` (never download duplicate Chromium or Playwright FFmpeg binaries).
 2. **4 Visual & Vocal Anti-Patterns (Strictly Banned)**:
-   - **NO `#0f172a` cyber-blue neon glassmorphism cards**: Canvas is locked to neutral warm charcoal `#262626` (`≥75%` whitespace) + `#303030` `1px` `#454548` hairline cards + `≤4%` `#F59E0B` warm amber accent.
-   - **NO static screenshots pretending to be video**: Any webpage/simulator hold `>2s` must be recorded as a real `60fps` Chrome stream via [capture_web.mjs](./scripts/capture_web.mjs) or use dynamic vector primitives.
-   - **NO single outer frame locked for the whole video**: Never repeat the same `primitive` in two consecutive scenes (`scene[i].primitive != scene[i-1].primitive`).
-   - **NO bouncing karaoke captions or robotic long sentences**: Each clause must be `8~16` spoken units (hard cap `19`). **CRITICAL SUBTITLE SYNC LAW**: `display_text` MUST match the spoken `tts_text` **1:1 word-for-word**! Only pure numeral/currency/unit formatting is permitted (`"十五种"` <-> `"15 种"`, `"一千美金"` <-> `"$1,000"`). NEVER paraphrase or insert unspoken words in `display_text`.
+   - **NO `#0f172a` cyber-blue neon glassmorphism cards**: Canvas is locked to neutral warm charcoal `#262626` (`≥72%` whitespace) + `#323232` `1px` `#3D3D3D` hairline cards + `≤4%` `#FE8A00` warm amber accent + `#090909` borderless subtitle capsule.
+   - **NO unframed raw desktop screen captures or static screenshots pretending to be video**: Wrap all app/web visuals inside `spotlight_window_tour` or `live_web_showcase` (with `blurZones[]` dimming non-focus clutter), or record real `60fps` Chrome streams via [capture_web.mjs](./scripts/capture_web.mjs).
+   - **NO single outer frame locked for the whole video & NO drone/pop audio spam**: Never repeat the same `primitive` in two consecutive scenes (`scene[i].primitive != scene[i-1].primitive`). Keep `ambient_bed: false` (pure `-65 dBFS` black pause floor, `LRA ~ 3.5 LU`) and never spam per-clause pop SFX.
+   - **NO bouncing karaoke captions or robotic isolated clause intonation**: Each clause must be `8~16` spoken units (median `12`, hard cap `19`). End continuation clauses with `，` so `build_video.py` synthesizes `2~3` continuation clauses in one coherent `cut0` pass (natural mid-sentence pitch suspension) while reserving `。` / `？` for true sentence drops and `700~850ms` suspense pauses! **CRITICAL SUBTITLE SYNC LAW**: `display_text` MUST match the spoken `tts_text` **1:1 word-for-word**! Only pure numeral/currency/unit formatting is permitted (`"十五种"` <-> `"15 种"`, `"一千美金"` <-> `"$1,000"`). NEVER paraphrase or insert unspoken words in `display_text`.
 
 ---
 
@@ -50,8 +51,8 @@ Read [archetypes-and-longform.md](./references/archetypes-and-longform.md) to se
 > If the user asks for a **3~15 minute full video** without having approved the script/outline yet, first present the **Chapter Outline + Opening 15s Sample or Script Table** for quick confirmation (or render Chapter 1 first in ~15 seconds) before synthesizing 10 minutes of scenes. If the user explicitly says "直接直出全片", render all chapters directly.
 
 ### Step 2: Author `video_project.json` in the User's Active Workspace
-Read [primitives-and-schema.md](./references/primitives-and-schema.md) for the exact JSON schema of `video_project.json`, the **Universal Scene Thesis Header (`topTitle` / `topPill`)**, and the **22 Universal Remotion Primitives**:
-`chapter_card` (supports `heroUnderlineMode`), `persona_quote`, `dot_matrix_stat`, `flow_3node`, `matrix_compare`, `focus_hud_demo`, `live_web_showcase`, `terminal_code_live`, `ranked_bars`, `evidence_clip`, `skill_editor_spotlight`, `stack_slice_builder`, `traffic_gate_box`, `deep_module_box`, `split_tree_chat_dispatch`, `annotated_ui_tour`, `org_tree_radiate`, `pipeline_timeline_flow`, `defense_boundary_flow`, `row_permission_table`, `acronym_token_slot`, `metaphor_canvas`.
+Read [primitives-and-schema.md](./references/primitives-and-schema.md) for the exact JSON schema of `video_project.json`, the **Universal Scene Header (`topTitle` / `topPill` / `stepper` / `subStepper`)**, the **Semantic Script-to-Primitive Router**, and all **31 Domain-Agnostic Remotion Primitives**:
+`chapter_card` (supports `heroUnderlineMode`), `persona_quote`, `dot_matrix_stat`, `flow_3node`, `matrix_compare`, `focus_hud_demo`, `live_web_showcase`, `terminal_code_live`, `ranked_bars`, `evidence_clip`, `skill_editor_spotlight`, `stack_slice_builder`, `traffic_gate_box`, `deep_module_box`, `split_tree_chat_dispatch`, `annotated_ui_tour`, `org_tree_radiate`, `pipeline_timeline_flow`, `defense_boundary_flow`, `row_permission_table`, `acronym_token_slot`, `metaphor_canvas`, `before_after_transformer`, `synergy_puzzle_pair`, `multi_perspective_ring`, `convergent_hub_bus`, `arc_gauge_audit`, `idle_waste_vs_event_wake`, `binary_decision_tree`, `spotlight_window_tour`, `vignette_metaphor_stage`.
 
 Key authoring rules for **3~15 Minute Long Videos**:
 - Partition into **chapters of `35~65 seconds` each** (`5~8 scenes` per chapter, ~`180~350` spoken units per chapter at `~345 CPM`).

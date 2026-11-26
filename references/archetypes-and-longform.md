@@ -34,8 +34,10 @@ At the empirically verified comfort cadence (`340~355` Chinese characters + Engl
 
 ---
 
-## 3. Conversational Scriptwriting Checklist (Anti-AI-Script Tone)
+## 3. Conversational Scriptwriting & Prosody Checklist (Anti-AI-Script Tone)
 
-- **Short Breath Clauses**: `8 ~ 16` units per clause (hard cap `19`). Break every `"通过...从而实现了..."` into two active spoken beats.
-- **Zero Throat-Clearing Openers**: Never start with *"大家好，今天我们来聊一聊..."*. Start at `0.0s` with a concrete conflict, counter-intuitive number, or sharp question.
-- **Rhetorical Question Hooks (`≥ 8%` of clauses)**: Drop a short question (`"问题出在哪？"`, `"真有这么神吗？"`) before unveiling key insights — `build_video.py` automatically detects `？`/`?` and inserts a `420ms` suspense pause before the answer!
+- **Short Breath Clauses + Coherent `cut0` Continuation Commas**:
+  - Keep `8 ~ 16` units per clause (median `12`, hard cap `19`).
+  - **Crucial Prosody Law**: End unfinished mid-sentence clauses with `，` (comma) and reserve `。` / `？` ONLY for the end of a complete thought (`2~3` clauses)! `build_video.py` automatically groups `2~3` comma-linked clauses into a single `cut0` GPT-SoVITS pass so pitch stays naturally suspended mid-sentence (`~210ms` micro-breath) instead of dropping flat on every line, while giving full stops `~530ms` digestion pauses!
+- **Zero Throat-Clearing Openers**: Never start with *"大家好，今天我们来聊一聊..."*. Start at `0.0s` with a concrete conflict, counter-intuitive number, or sharp visual (`vignette_metaphor_stage`, `dot_matrix_stat`, or `spotlight_window_tour`).
+- **Rhetorical Question & Contrast Suspense (`≥ 6%` of clauses)**: Drop a short question (`"问题出在哪？"`, `"为什么差这么多？"`) or contrast pivot (`"但最关键的是..."`) before unveiling key insights — `build_video.py` automatically injects a **`700~850ms` pure `-65 dBFS` studio-black suspense pause** (`ambient_bed: false`, `LRA ~ 3.5 LU`)!

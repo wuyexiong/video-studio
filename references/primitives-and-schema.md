@@ -1,16 +1,19 @@
-# `video_project.json` Schema & 22 Universal Remotion Primitives
+# `video_project.json` Schema & 31 Domain-Agnostic Remotion Primitives
 
 All renders in `video-studio` are 100% data-driven via a single `video_project.json` manifest placed in the user's active workspace. You do NOT need to copy `node_modules` or scaffold a new React project in the user's workspace.
 
 ---
 
-## 0. Universal Top Scene Thesis Header (`scene.data`)
+## 0. Universal Scene Thesis & Connected Multi-Stage Stepper Header (`scene.data`)
 
-Every scene (regardless of `primitive`) supports an optional **Top Scene Thesis Header** rendered by `SceneThesisHeader`:
-- `topPill`: Top-center rounded capsule label (e.g. `"AI 圈最近爆红的 SKILL"` or `"电商网站，改用「使用者功能」垂直切分"`).
-- `topPillTag`: Optional highlighted tag prefix inside `topPill` (e.g. `"同一题"`). If omitted, an amber dot is rendered.
-- `topTitle`: Top-center bold thesis equation or question (e.g. `"grill-me = AI 反过来拷问你"`, `"TDD = 防作弊机制"`, `"好架构 = 深模组 (Deep Module)"`).
-- `topAccentWord`: Substring inside `topTitle` to highlight in a semantic color (e.g. `"grill-me"`, `"TDD"`, `"深模组"`).
+Every scene (regardless of `primitive`) supports an optional **Top Scene Header** rendered by `SceneThesisHeader`:
+- `stepper`: Connected horizontal progress pills for multi-part chapters, e.g. `["獲客漏斗", "定價策略", "技術護城河"]` or `[{ "label": "外掛整合", "status": "done" }, { "label": "標準流程", "status": "active" }, { "label": "自動觸發", "status": "pending" }]`. Completed items automatically show an emerald `✓` circle; active item lights up in solid `#FE8A00`.
+- `activeStepIndex`: Zero-based index of the active pill when `stepper` is a string array (e.g. `1`).
+- `subStepper`: Optional second-row sub-step pills (e.g. `["1 自然語言", "2 匯入規格", "3 錄製示範"]`), synced to `activeSubStepIndex` or current spoken clause.
+- `topPill`: Top-center rounded capsule label (e.g. `"同一題 · 垂直功能切片"`).
+- `topPillTag`: Optional highlighted tag prefix inside `topPill` (e.g. `"解法"`). If omitted, an amber dot is rendered.
+- `topTitle`: Top-center bold thesis equation or question (e.g. `"TDD = 防作弊機制"`, `"好架構 = 深模組 (Deep Module)"`).
+- `topAccentWord`: Substring inside `topTitle` to highlight in a semantic color (e.g. `"TDD"`, `"深模組"`).
 - `topAccentTone`: `"amber"` (default) | `"emerald"` | `"coral"`.
 
 ---
@@ -28,6 +31,7 @@ Every scene (regardless of `primitive`) supports an optional **Top Scene Thesis 
   "speed_factor": 1.10,
   "fps": 30,
   "show_waveform": true,
+  "subtitle_font_size": 56,
   "captures": [
     {
       "url": "https://example.com",
@@ -354,51 +358,51 @@ Best for: Deep module vs. shallow module encapsulation, API gateway / facade pat
 }
 ```
 
-### ⑮ `split_tree_chat_dispatch` — 左树居中生长 ➔ 平滑左移分屏 ➔ 右侧聊天派工联动（复刻《Grok Bot》13:00）
-Best for: Shared workspace / context folder tree growing in center, then shifting left to reveal multi-agent task handoff and live prompt typing while highlighting the referenced folder row.
+### ⑮ `split_tree_chat_dispatch` — 左树居中生长 ➔ 平滑左移分屏 ➔ 右侧模块交接流
+Best for: Shared workspace / repository folder tree growing in center, then shifting left to reveal zero-duplication spec handoff between upstream & downstream modules.
 ```json
 "primitive": "split_tree_chat_dispatch",
 "data": {
-  "rootLabel": "雲端硬碟 · Shared Drive",
+  "rootLabel": "共用工作區 · Shared Repo",
   "workspaceName": "workspace",
   "folders": [
-    { "name": "context", "files": "about.md · brand.md", "stepClause": 0 },
-    { "name": "meetings", "files": "spec.md", "stepClause": 1, "highlight": true },
-    { "name": "projects", "files": "官網程式碼", "stepClause": 2 }
+    { "name": "context", "files": "brand.md · rules.md", "stepClause": 0 },
+    { "name": "specs", "files": "checkout_v2.md", "stepClause": 1, "highlight": true },
+    { "name": "dist", "files": "build_bundle", "stepClause": 2 }
   ],
   "shiftClause": 2,
   "typeClause": 3,
-  "fromBot": "幕僚長",
-  "toBot": "Dev bot",
-  "dispatchBadge": "一句話派工",
-  "chatPrompt": "根據 meetings 裡面討論出來的規格幫我寫官網，品牌規範看 context，做完存到 projects"
+  "sourceNode": "調度核心",
+  "targetNode": "實作引擎",
+  "dispatchBadge": "上下文零重複交接",
+  "dispatchText": "依據 specs 規格與 context 規範實作結帳頁，產物輸出至 dist"
 }
 ```
 
-### ⑯ `annotated_ui_tour` — 三栏软件界面 + 暗化聚光灯移动 + `① ② ③` 序号分步导览（复刻《Grok Bot》04:20）
-Best for: 30-second UI walkthroughs of any app (Left sidebar, Center chat/canvas, Right inspector), lighting up each pane with an amber spotlight and numbered circle `① ② ③` on `stepClause`.
+### ⑯ `annotated_ui_tour` — 三栏软件界面 + 暗化聚光灯移动 + `① ② ③` 序号导览（支持右上倒数环 `countdownSec`）
+Best for: 30-second UI walkthroughs of any SaaS/desktop app (Left nav, Center canvas, Right inspector), lighting up each pane with an `#FE8A00` spotlight on `stepClause`.
 ```json
 "primitive": "annotated_ui_tour",
 "data": {
-  "topTitle": "30 秒看懂軟體主介面",
+  "countdownSec": 30,
   "zones": [
-    { "badge": "1", "title": "左側：專職 Bot 清單", "subtitle": "釘選幕僚長與群組分區", "items": ["★ 幕僚長", "🎨 設計主管", "📈 美股情報員"], "stepClause": 0 },
-    { "badge": "2", "title": "中間：自然語言對話區", "subtitle": "交代目標或跳出確認小卡", "items": ["主動彈出推薦任務", "敏感操作預覽確認"], "stepClause": 1 },
-    { "badge": "3", "title": "右側：排程 · 資料庫 · 雲端電腦", "subtitle": "隨時接管遠端螢幕", "items": ["Routines 定時排程", "Library 檔案庫", "Computer 雲端桌面"], "stepClause": 2 }
+    { "badge": "1", "title": "左側：模組導覽清單", "subtitle": "分類分組與高頻釘選", "items": ["★ 核心入口釘選", "📂 專案工作區分組"], "stepClause": 0 },
+    { "badge": "2", "title": "中間：核心互動主畫布", "subtitle": "指令輸入與確認預覽", "items": ["主動推薦下一步動作", "敏感變更前跳出確認卡"], "stepClause": 1 },
+    { "badge": "3", "title": "右側：狀態 · 資源庫 · 監控", "subtitle": "展開檢視底層運行環境", "items": ["定時排程與 Webhook", "共用知識庫", "即時運行畫面"], "stepClause": 2 }
   ]
 }
 ```
 
-### ⑰ `org_tree_radiate` — 1对多上下级组织树对比（没中间层 vs 幕僚长）或无碰撞星型放射导图（复刻《Grok Bot》05:50 & 《grill-me》08:50）
-Best for: `"mode": "hierarchy_compare"` (Left tangled 1-to-5 lines management fatigue vs. Right clean Chief-of-Staff 1-to-3 tree) OR `"mode": "radial_mindmap"` (Center action radiating lines to 8~10 files in an elliptical polar ring, e.g., Shotgun Surgery).
+### ⑰ `org_tree_radiate` — 无框高留白「1对多散乱直连 vs 统一中枢层」对比 或 无碰撞星型放射导图
+Best for: `"mode": "hierarchy_compare"` (Left direct 1-to-5 fanout overhead vs. Right clean single-hub routing layer) OR `"mode": "radial_mindmap"` (Center change radiating to 8~10 coupled files).
 ```json
 "primitive": "org_tree_radiate",
 "data": {
   "mode": "hierarchy_compare",
-  "topTitle": "為什麼第一隻 Bot 要設成幕僚長？",
   "rightClause": 1,
-  "chiefTitle": "幕僚長 (Chief of Staff)",
-  "subBots": ["晨間信箱秘書", "美股情報員", "全端工程師"]
+  "topActor": "調用端",
+  "hubTitle": "統一閘道中樞 (API Gateway)",
+  "leafNodes": ["帳務服務", "風控引擎", "通知模組"]
 }
 ```
 
@@ -461,7 +465,7 @@ Best for: `"mode": "token_slot"` (`[今天] [出門] ... [外面] [正在] [ ? ]
 }
 ```
 
-### ㉒ `metaphor_canvas` — 核心比喻剖面剧场（「没有大门的房子」或「36 颗神经网络参数旋钮面板」，复刻《grill-me》11:45 & 《AI 背後怎麼運作》10:15）
+### ㉒ `metaphor_canvas` — 核心比喻剖面剧场（「没有大门的房子」或「36 颗神经网络参数旋钮面板」）
 Best for: `"mode": "no_door_house"` (Architectural cross-section house without a front door where kitchen/living-room/bedroom require climbing windows or chimneys) OR `"mode": "rotary_knobs"` (27 rotary weight knobs continuously turning and tuning angles).
 ```json
 "primitive": "metaphor_canvas",
@@ -472,3 +476,195 @@ Best for: `"mode": "no_door_house"` (Architectural cross-section house without a
   "topAccentTone": "coral"
 }
 ```
+
+### ㉓ `before_after_transformer` — 「反面做法划除 ➔ 翡翠绿正面解法 + 下方结果实时收敛压缩器」
+Best for: SQL slow-scan vs indexed query, bloated copy vs high-CVR copy, vague chores vs outcome-driven spec, noisy raw input vs filtered signal (`128 -> 2`).
+```json
+"primitive": "before_after_transformer",
+"data": {
+  "subjectBadge": "資料庫查詢優化",
+  "beforeLabel": "反面做法 · 全表掃描",
+  "beforeText": "SELECT * FROM events WHERE status = 'open'",
+  "afterLabel": "正面解法 · 複合索引精準命中",
+  "afterText": "建立 (tenant_id, status) 索引，僅取必要欄位",
+  "outcomeTitle": "掃描行數與延遲變化",
+  "beforeMetric": "124,000 行 · 3.8s",
+  "afterMetric": "3 行 · 4.2ms",
+  "beforeItems": ["全表逐頁 I/O 讀取 #01", "無關歷史冷數據 #02", "鎖競爭阻塞請求 #03"],
+  "afterItems": [
+    { "text": "B-Tree 索引直接定位目標分區", "badge": "耗時 -99.8%" },
+    { "text": "覆蓋索引免回表查詢", "badge": "零阻塞" }
+  ]
+}
+```
+
+### ㉔ `synergy_puzzle_pair` — 互补双拼图滑入咬合锁定卡（Module A + Module B 强强联手）
+Best for: Two complementary tools/layers snapping together (Lightweight UI + Heavy Engine, Free SEO Funnel + Paid Core, Local Client + Cloud Compute).
+```json
+"primitive": "synergy_puzzle_pair",
+"data": {
+  "leftTag": "LAYER A · ACQUISITION",
+  "leftTitle": "免費網頁小工具",
+  "leftSub": "零門檻 SEO 自然流量入口",
+  "leftPill": "每月 85,000 精準訪客",
+  "rightTag": "LAYER B · MONETIZATION",
+  "rightTitle": "桌面端買斷專業版",
+  "rightSub": "端側原生 API 零算力成本",
+  "rightPill": "淨毛利率 94.2%",
+  "snapClause": 2
+}
+```
+
+### ㉕ `multi_perspective_ring` — 左屏观点流聚光（非焦点自动降噪虚化）+ 右侧多视角环形联动图
+Best for: Multi-perspective product reviews (User / Business / Engineering / Security), microservice ring communication, architecture trade-off debates.
+```json
+"primitive": "multi_perspective_ring",
+"data": {
+  "nodes": [
+    { "label": "商業決策", "icon": "★", "color": "#FE8A00" },
+    { "label": "產品體驗", "icon": "P", "color": "#FF6911" },
+    { "label": "工程架構", "icon": "</>", "color": "#17B7A6" },
+    { "label": "合規風控", "icon": "🛡️", "color": "#7C5BFD" }
+  ],
+  "messages": [
+    { "speaker": "產品體驗", "text": "首屏三秒內讓免費用戶跑通第一個結果", "stepClause": 0 },
+    { "speaker": "工程架構", "text": "重度推理改走非同步佇列，避免阻塞主執行緒", "stepClause": 1 },
+    { "speaker": "商業決策", "text": "免費額度設單日硬上限，匯出高清版觸發付費牆", "stepClause": 2 }
+  ]
+}
+```
+
+### ㉖ `convergent_hub_bus` — 上排多端独立入口 ➔ 底层单一共享底座/数据总线汇聚图
+Best for: Multi-client single-backend architectures, 2-tier global vs isolated memory, multi-product shared auth/billing hub.
+```json
+"primitive": "convergent_hub_bus",
+"data": {
+  "topNodes": [
+    { "title": "iOS 行動端", "sub": "隨時隨地觸發", "color": "#7C5BFD" },
+    { "title": "Web 管理台", "sub": "視覺化審閱", "color": "#17B7A6" },
+    { "title": "CLI 自動化", "sub": "批次腳本調用", "color": "#FF6911" }
+  ],
+  "baseTitle": "單一共用底層狀態機與儲存底座",
+  "baseSub": "任何一端寫入變更，全端毫秒級同步生效",
+  "syncPills": ["免重複登入授權", "單一真實數據源"],
+  "convergeClause": 1
+}
+```
+
+### ㉗ `arc_gauge_audit` — 双半圆反差仪表盘（`dual_compare`）或 极速指针+骨架屏逐行绿勾扫描（`speed_scan`）
+Best for: Permission boundaries (Read Wide vs Write Strict), unit economics contrast (Margin vs CAC), or ultra-fast response + accuracy verification.
+```json
+"primitive": "arc_gauge_audit",
+"data": {
+  "mode": "dual_compare",
+  "leftTitle": "讀取與分析權限",
+  "leftTag": "大方開放 · 掌握完整脈絡",
+  "leftPct": 88,
+  "leftIcon": "👁️",
+  "rightTitle": "外部寫入與扣款",
+  "rightTag": "嚴格收緊 · 必經人工確認",
+  "rightPct": 15,
+  "rightIcon": "🔒"
+}
+```
+
+### ㉘ `idle_waste_vs_event_wake` — 周期空转损耗条 `[空轉][空轉]` vs 休眠零消耗按需秒醒状态机
+Best for: Cron polling vs Webhook event triggers, fixed idle EC2 burn vs Serverless scale-to-zero, ad waste vs intent-driven conversion.
+```json
+"primitive": "idle_waste_vs_event_wake",
+"data": {
+  "wasteTitle": "固定每 10 分鐘輪詢：95% 喚醒都在空轉燒配額",
+  "wasteInterval": "Every 10m Polling",
+  "sleepLabel": "平時完全休眠 ($0 閒置成本)",
+  "triggerLabel": "Webhook 事件到達",
+  "wakeLabel": "1 秒喚醒精準處理",
+  "wakeClause": 1
+}
+```
+
+### ㉙ `binary_decision_tree` — 顶部设问 ➔ 正交二分法决策树与代价提示条
+Best for: "When to use A vs. When to use B" decision frameworks (Monolith vs Microservices, One-time Purchase vs Subscription, Sync vs Async).
+```json
+"primitive": "binary_decision_tree",
+"data": {
+  "question": "產品商業化該選「買斷制」還是「月訂閱」？",
+  "leftBranchLabel": "零雲端算力成本",
+  "leftTitle": "$29 終身買斷制",
+  "leftDetail": "消除用戶訂閱疲勞，首週現金流轉化率高 3 倍",
+  "rightBranchLabel": "持續消耗外部 API",
+  "rightTitle": "$19/月 分級訂閱制",
+  "rightDetail": "綁定每月額度上限，嚴防重度用戶倒貼算力費",
+  "footerWarning": "⚠️ 切忌：後端調用昂貴大模型卻賣終身買斷，必將坐吃山空"
+}
+```
+
+### ㉚ `spotlight_window_tour` — 暗色圆角实录窗 + `blurZones[]` 非焦点打码压暗 + `#FE8A00` 聚光框推镜
+Best for: Any real app/website screenshot or `.mp4` clip where distracting sidebars/text are automatically blurred while `#FE8A00` frames the exact target control.
+```json
+"primitive": "spotlight_window_tour",
+"data": {
+  "windowTitle": "dashboard.stripe.com/billing",
+  "imageFile": "./assets/billing_screen.png",
+  "blurZones": [
+    { "xPct": 0, "yPct": 0, "wPct": 24, "hPct": 100 },
+    { "xPct": 25, "yPct": 62, "wPct": 75, "hPct": 38 }
+  ],
+  "focusBox": { "xPct": 28, "yPct": 22, "wPct": 48, "hPct": 32 },
+  "zoomScale": 1.16,
+  "pills": ["零代碼接入", "自動稅務合規"]
+}
+```
+
+### ㉛ `vignette_metaphor_stage` — 径向暗角羽化视觉隐喻剧场 + 动态悬浮批注与清单卡
+Best for: High-memorability visual metaphor anchors (`imageFile` seamlessly blended into `#262626` via radial mask, or built-in vector contrast stage) paired with spring callout pills.
+```json
+"primitive": "vignette_metaphor_stage",
+"data": {
+  "imageFile": "./assets/cloud_vs_local.png",
+  "leftCallout": "本機斷電即中斷",
+  "rightCallout": "雲端獨立持續運行",
+  "checklist": ["自動重試失敗任務", "保留登入授權狀態", "完成後主動推播通知"]
+}
+```
+
+---
+
+## 3. Semantic Script-to-Primitive Router (Mandatory Anti-Monotony Matching Matrix)
+
+Do NOT lazily default to `flow_3node` and `matrix_compare` for every scene! Match each scene's rhetorical intent to its dedicated primitive:
+
+| Spoken Rhetorical Pattern / Scene Intent | Best-Fit Primitive |
+| :--- | :--- |
+| 「很多人常犯的错是 X（杂事/慢做法），正确做法应该是 Y，结果从 128 变成 3」 | `before_after_transformer` |
+| 「A 强在... B 强在... 把两边接在一起刚好互补」 | `synergy_puzzle_pair` |
+| 「到底什么时候该用 A，什么时候该用 B？一个最简单的判断标准…」 | `binary_decision_tree` |
+| 「定时每 10 分钟检查都在白白空转浪费 vs 事件触发平时休眠一秒唤醒」 | `idle_waste_vs_event_wake` |
+| 「上层各自有独立入口/记忆，但底层共用同一台主机/数据库/中台」 | `convergent_hub_bus` |
+| 「从产品、工程、商业、风控多个视角轮流发言抓盲点」 | `multi_perspective_ring` |
+| 「读的权限很大方（88%）vs 写的权限很吝啬（15%）」或「速度快到怀疑但逐行全对」 | `arc_gauge_audit` |
+| 「真实软件/网页局部操作演示（需虚化周围杂乱文字并框选按钮）」 | `spotlight_window_tour` |
+| 「30 秒快速看懂主界面左、中、右三块分区」 | `annotated_ui_tour` |
+| 「没有中间层一对多管理疲劳 vs 设一个统一调度层收敛分发」 | `org_tree_radiate` |
+| 「共用目录结构（context / specs / dist）+ 一句话跨模块交接」 | `split_tree_chat_dispatch` |
+| 「接下来需要做三件事：第一…第二…第三…」（跨多场持续显示当前进度） | Add `stepper: [...]` + `activeStepIndex` on `scene.data` |
+| 「具象比喻金句锚点（如笔电着火 vs 云端安稳、微缩办公室、门铃）」 | `vignette_metaphor_stage` |
+
+---
+
+## 3. Clause-Synchronized Smooth Focus & Motion Hygiene (`scene.data`)
+
+`StudioVideo.tsx` uses bidirectional `SPRING_SILKY` (`getSmoothClauseValue`) across clause boundaries so focus rings, border tints, scale elevations (`1.0 -> 1.022`), and dim opacities glide smoothly instead of hard-snapping on single frames, while snapping cleanly via `settle()` once stationary to prevent subpixel CJK anti-aliasing shimmer.
+
+1. **Explicit Clause-to-Element Mapping (`clauseFocus`)**:
+   - Supported on `flow_3node`, `matrix_compare`, `terminal_code_live`, `ranked_bars`, `evidence_clip`, and `skill_editor_spotlight`.
+   - Pass `"clauseFocus": [0, 1, 2, -1]` (one integer per clause) whenever `clauses.length !== items.length`:
+     - `0..N-1`: Smoothly spotlights that node / column / line / bar / excerpt on that clause.
+     - `-1`: Intro or summary beat — keeps all items at balanced neutral visibility with zero single-item spotlight.
+2. **Row-Level Sub-Item Focus in `matrix_compare` (`itemFocus`)**:
+   - Optional `"itemFocus": [-1, 0, 1, 0, 1]` paired with `clauseFocus` highlights a specific row card inside the active `matrix_compare` column on each spoken beat.
+3. **`evidence_clip` Title Intro Beat**:
+   - When `clauses.length === excerpts.length + 1` (and `clauseFocus` is omitted), Clause `0` automatically acts as the document header / speaker intro beat (`focusedIdx = -1`), and Clauses `1..N` highlight Excerpts `0..N-1` exclusively one by one.
+4. **Proportional `dot_matrix_stat` Ratios**:
+   - Always match `highlightDots` proportionally to `totalDots` and the spoken percentage (e.g., `"90%"` with `"totalDots": 200` -> `"highlightDots": 180` or `"88%"` -> `176`), never an unscaled literal `88` out of `200`.
+5. **Compact `focus_hud_demo` Button Labels**:
+   - Keep `primaryAction`, `clickedLabel`, and `secondaryAction` concise (`<= 6` CJK chars or `<= 14` English chars, e.g. `"切换身份"` / `"已锁定"` / `"硬撑"`) so buttons never wrap or crowd the HUD footer; the animated cursor lands on the bottom-right corner of the primary button with a press-bounce + emerald ripple without covering button text.

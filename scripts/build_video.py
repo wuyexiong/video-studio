@@ -224,11 +224,46 @@ VALID_PRIMITIVES = {
     "row_permission_table",
     "acronym_token_slot",
     "metaphor_canvas",
+    "before_after_transformer",
+    "synergy_puzzle_pair",
+    "multi_perspective_ring",
+    "convergent_hub_bus",
+    "arc_gauge_audit",
+    "idle_waste_vs_event_wake",
+    "binary_decision_tree",
+    "spotlight_window_tour",
+    "vignette_metaphor_stage",
 }
 
 
 def count_units(s: str) -> int:
     return len(re.findall(r"[\u4e00-\u9fff]", s)) + len(re.findall(r"[A-Za-z0-9]+", s))
+
+
+def normalize_tts_text(raw: str, lang: str = "zh") -> str:
+    """
+    Clean bilingual CJK + English tech text & numeric symbols for GPT-SoVITS without altering display_text:
+    1. Strip thousand-separator commas inside digits ('1,000' -> '1000') so TTS never pauses mid-number.
+    2. Expand '$N' shorthand naturally in Chinese mode ('$0' -> '0 美元', '$30' -> '30 美元').
+    3. Replace hyphens inside CLI identifiers ('yt-dlp' -> 'yt dlp', 'grill-me' -> 'grill me').
+    4. Insert clean space boundaries between CJK characters and ASCII words/digits.
+    """
+    t = raw.strip()
+    if not t:
+        return t
+    # 1. Remove thousand commas inside numbers: 1,000,000 -> 1000000
+    while re.search(r"(\d),(\d{3})(?!\d)", t):
+        t = re.sub(r"(\d),(\d{3})(?!\d)", r"\1\2", t)
+    # 2. Currency $N in zh/mix mode
+    if lang != "en":
+        t = re.sub(r"\$(\d+(?:\.\d+)?)", r"\1 美元", t)
+    # 3. Hyphenated ASCII tech identifiers -> space
+    t = re.sub(r"([A-Za-z])-([A-Za-z0-9])", r"\1 \2", t)
+    # 4. Space CJK <-> ASCII boundaries for cleaner bilingual phoneme transitions
+    t = re.sub(r"([\u4e00-\u9fff])([A-Za-z0-9])", r"\1 \2", t)
+    t = re.sub(r"([A-Za-z0-9])([\u4e00-\u9fff])", r"\1 \2", t)
+    t = re.sub(r"\s{2,}", " ", t)
+    return t.strip()
 
 
 def sha256_str(s: str) -> str:
@@ -384,6 +419,73 @@ def is_healthy_clause_audio(wav_arr: np.ndarray, sr: int, chars: list, n_units: 
     return True, "ok"
 
 
+PODCAST_MASTER_AF = (
+    "highpass=f=75,"
+    "equalizer=f=175:t=q:w=1.1:g=1.3,"
+    "equalizer=f=6400:t=q:w=2.0:g=-2.2,"
+    "acompressor=threshold=-20dB:ratio=2.6:attack=12:release=140:makeup=1.8,"
+    "loudnorm=I=-16.5:TP=-1.0:LRA=3.5"
+)
+
+KINETIC_SFX_PRIMITIVES = {
+    "chapter_card",
+    "synergy_puzzle_pair",
+    "before_after_transformer",
+    "focus_hud_demo",
+    "spotlight_window_tour",
+}
+
+
+def compute_semantic_pause_ms(
+    tts_txt: str,
+    next_tts_txt: str | None,
+    is_scene_end: bool,
+    is_chapter_end: bool,
+    scene_pause_override: int | None = None,
+    chapter_tail_override: int | None = None,
+    multi_chapter: bool = True,
+) -> int:
+    """
+    Forensic 3-Tier Semantic Breath & Suspense Pause Engine:
+    - Accounts for ~55ms trailing safety margin inside each sliced clause WAV:
+      * L1 Intra-thought continuation (comma / enjambment): ~150ms silence -> ~205ms true acoustic breath
+      * L2 Full statement / scene transition (period / exclamation): ~475ms silence -> ~530ms true reset
+      * L3 Rhetorical question or contrast pivot ('但'/'不過'/'最關鍵'): ~690-820ms silence -> ~750-875ms suspense!
+    """
+    s = tts_txt.strip()
+    jitter = (int(sha256_str(s)[:4], 16) % 31) - 15  # deterministic +-15ms human micro-variance
+
+    if is_chapter_end:
+        if chapter_tail_override is not None:
+            return int(chapter_tail_override)
+        return max(340, (620 if multi_chapter else 380) + jitter)
+
+    is_question = bool(re.search(r"[？?]|嗎[。！]?$|呢[。！]?$|為什麼|怎麼|到底|什麼", s))
+    next_is_contrast = bool(
+        next_tts_txt and re.match(r"^\s*(但|不過|然而|結果|偏偏|關鍵是|最關鍵|問題是|反過來)", next_tts_txt)
+    )
+    ends_full_stop = s.endswith(("。", "！", "；", ".", "!", ";"))
+
+    if is_scene_end:
+        if scene_pause_override is not None:
+            return int(scene_pause_override)
+        if is_question:
+            return max(520, 760 + jitter)
+        if next_is_contrast:
+            return max(460, 620 + jitter)
+        return max(380, 485 + jitter)
+
+    # Intra-scene boundary between clauses
+    if is_question:
+        return max(520, 690 + jitter)
+    if ends_full_stop:
+        return max(380, 465 + jitter)
+    if next_is_contrast:
+        return max(240, 310 + jitter)
+    # Continuation comma / short breath
+    return max(120, 152 + (jitter // 2))
+
+
 def synth_and_align_clause(
     tts_text: str,
     preset: str,
@@ -394,21 +496,18 @@ def synth_and_align_clause(
     reg: dict | None = None,
 ) -> tuple[Path, float, list, str, str]:
     """
-    Aligner-Guided + Acoustic-Bounded Exact Trim & Timestamping (v4 Multi-Voice + Silence Auto-Retry):
-    1. Resolves voice ID, model weight signature, and preset reference audio from voices/registry.json.
-    2. Includes voice_id + weight filenames in cache key so re-training (v1 -> v2) or switching speakers
-       automatically invalidates stale caches.
-    3. Hot-swaps GPT & SoVITS weights on 127.0.0.1:9880 idempotently before synthesis.
-    4. Balances per-clause RMS so multi-speaker (male + female) chapters have uniform loudness.
+    Aligner-Guided + Acoustic-Bounded Exact Trim & Timestamping (v6 Normalized + Tight Tail Margin):
     """
     vid, vcfg, eff_preset, ref_wav_init, _, _ = resolve_voice_preset(voice, preset, reg)
+    resolved_lang_init = "en" if eff_preset == "en" else "zh"
+    clean_tts = normalize_tts_text(tts_text, lang=resolved_lang_init)
     aux_refs = resolve_voice_aux_refs(vcfg)
     aux_sig = ",".join(Path(p).name for p in aux_refs)
     weight_sig = f"{vid}|{vcfg.get('gpt_weights', '')}|{vcfg.get('sovits_weights', '')}|{Path(ref_wav_init).name}|{aux_sig}"
-    key = sha256_str(f"v5_steady_aux|{weight_sig}|{eff_preset}|{speed:.3f}|{tts_text}")
+    key = sha256_str(f"v6_norm_clause|{weight_sig}|{eff_preset}|{speed:.3f}|{clean_tts}")
     wav_cache = cache_dir / f"clause_{key}.wav"
     json_cache = cache_dir / f"clause_{key}.json"
-    n_units = max(1, count_units(tts_text))
+    n_units = max(1, count_units(clean_tts))
     sr = 48000
 
     if wav_cache.exists() and json_cache.exists():
@@ -418,7 +517,7 @@ def synth_and_align_clause(
             ok, reason = is_healthy_clause_audio(cached_wav, cached_sr, meta.get("chars", []), n_units)
             if ok:
                 return wav_cache, float(meta["duration"]), meta["chars"], vid, eff_preset
-            print(f"[VoiceClone Guard] Purging unhealthy cached clause ({reason}): {tts_text}")
+            print(f"[VoiceClone Guard] Purging unhealthy cached clause ({reason}): {clean_tts}")
         except Exception:
             pass
         wav_cache.unlink(missing_ok=True)
@@ -426,14 +525,13 @@ def synth_and_align_clause(
 
     ensure_voice_weights_on_server(vid, vcfg)
 
-    # 4-tier steady-state retry schedule: locked to eff_preset (no cross-preset switching!)
     eos_punct = "." if eff_preset == "en" else "。"
-    punct_text = tts_text.rstrip("，,；; ") + ("" if tts_text.rstrip().endswith(("。", "！", "？", ".", "!", "?")) else eos_punct)
+    punct_text = clean_tts.rstrip("，,；; ") + ("" if clean_tts.rstrip().endswith(("。", "！", "？", ".", "!", "?")) else eos_punct)
     retry_configs = [
-        {"preset": eff_preset, "temp": 0.75, "top_p": 0.88, "top_k": 15, "split": "cut5", "parallel": True,  "text": tts_text},
-        {"preset": eff_preset, "temp": 0.70, "top_p": 0.85, "top_k": 12, "split": "cut0", "parallel": False, "text": punct_text},
-        {"preset": eff_preset, "temp": 0.65, "top_p": 0.82, "top_k": 12, "split": "cut5", "parallel": False, "text": punct_text},
-        {"preset": eff_preset, "temp": 0.60, "top_p": 0.80, "top_k": 10, "split": "cut0", "parallel": False, "text": tts_text},
+        {"preset": eff_preset, "temp": 0.72, "top_p": 0.86, "top_k": 14, "split": "cut0", "parallel": False, "text": clean_tts},
+        {"preset": eff_preset, "temp": 0.68, "top_p": 0.84, "top_k": 12, "split": "cut0", "parallel": False, "text": punct_text},
+        {"preset": eff_preset, "temp": 0.64, "top_p": 0.82, "top_k": 12, "split": "cut5", "parallel": False, "text": punct_text},
+        {"preset": eff_preset, "temp": 0.60, "top_p": 0.80, "top_k": 10, "split": "cut0", "parallel": False, "text": clean_tts},
     ]
 
     clipped = np.zeros(int(0.5 * sr), dtype=np.float32)
@@ -459,7 +557,7 @@ def synth_and_align_clause(
             "text_split_method": cfg["split"],
             "batch_size": 1,
             "speed_factor": speed,
-            "fragment_interval": 0.22,
+            "fragment_interval": 0.18,
             "parallel_infer": cfg["parallel"],
             "repetition_penalty": 1.35,
             "media_type": "wav",
@@ -486,11 +584,10 @@ def synth_and_align_clause(
         wav = wav - float(np.mean(wav)) if len(wav) else np.zeros(int(0.1 * sr), dtype=np.float32)
 
         align_lang = "English" if cur_preset == "en" else "Chinese"
-        res = aligner.align(pcm48_tmp, tts_text, language=align_lang)
+        res = aligner.align(pcm48_tmp, clean_tts, language=align_lang)
         pcm48_tmp.unlink(missing_ok=True)
         raw_segs = res.segments or []
 
-        # Compute acoustic active speech envelope (>0.012 peak in 5ms windows) so we never chop off real voice
         win = max(1, int(0.005 * sr))
         padded = np.pad(np.abs(wav), (0, (-len(wav)) % win))
         active_wins = np.where(padded.reshape(-1, win).max(axis=1) > 0.012)[0]
@@ -502,14 +599,14 @@ def synth_and_align_clause(
             last_ed = float(raw_segs[-1]["end"])
             eff_start = min(first_st, ac_on_sec) if len(active_wins) > 0 else first_st
             eff_end = max(last_ed, ac_off_sec) if len(active_wins) > 0 else last_ed
-            cut_start_sec = max(0.0, eff_start - 0.075)
-            cut_end_sec = min(len(wav) / float(sr), eff_end + 0.085)
+            cut_start_sec = max(0.0, eff_start - 0.055)
+            cut_end_sec = min(len(wav) / float(sr), eff_end + 0.055)
             i0 = int(round(cut_start_sec * sr))
             i1 = max(i0 + 1, int(round(cut_end_sec * sr)))
             clipped = wav[i0:i1].copy()
             extra_pre_sec = 0.0
-            if (eff_start - cut_start_sec) < 0.065:
-                extra_pre_sec = 0.065 - (eff_start - cut_start_sec)
+            if (eff_start - cut_start_sec) < 0.045:
+                extra_pre_sec = 0.045 - (eff_start - cut_start_sec)
                 clipped = np.concatenate([np.zeros(int(round(extra_pre_sec * sr)), dtype=np.float32), clipped])
 
             fade_n = min(int(0.008 * sr), len(clipped) // 8)
@@ -527,9 +624,8 @@ def synth_and_align_clause(
                 }
                 for s in raw_segs
             ]
-            # If aligner compressed trailing char timestamps while acoustic speech continued, spread trailing chars proportionally
-            if chars and chars[-1]["end"] < clip_dur - 0.25:
-                chars[-1]["end"] = round(max(chars[-1]["start"] + 0.08, clip_dur - 0.06), 3)
+            if chars and chars[-1]["end"] < clip_dur - 0.22:
+                chars[-1]["end"] = round(max(chars[-1]["start"] + 0.08, clip_dur - 0.05), 3)
         else:
             clipped = wav.copy()
             chars = []
@@ -537,9 +633,9 @@ def synth_and_align_clause(
         ok, reason = is_healthy_clause_audio(clipped, sr, chars, n_units)
         if ok:
             if attempt_idx > 1:
-                print(f"[VoiceClone Guard] Retry #{attempt_idx} succeeded for: {tts_text} (dur={len(clipped)/sr:.2f}s)")
+                print(f"[VoiceClone Guard] Retry #{attempt_idx} succeeded for: {clean_tts} (dur={len(clipped)/sr:.2f}s)")
             break
-        print(f"[VoiceClone Guard] Attempt #{attempt_idx} unhealthy ({reason}) for '{tts_text}' -> retrying...")
+        print(f"[VoiceClone Guard] Attempt #{attempt_idx} unhealthy ({reason}) for '{clean_tts}' -> retrying...")
 
     clipped = normalize_clause_rms(clipped, target_rms=0.085)
     sf.write(str(wav_cache), clipped, sr, subtype="PCM_16")
@@ -551,19 +647,206 @@ def synth_and_align_clause(
     return wav_cache, dur, chars, vid, eff_preset
 
 
+def synth_and_align_group(
+    raw_texts: list[str],
+    preset: str,
+    speed: float,
+    cache_dir: Path,
+    aligner,
+    voice: str | None = None,
+    reg: dict | None = None,
+) -> list[tuple[Path, float, list, str, str]] | None:
+    """
+    Coherent Thought-Group Synthesis ('cut0' Single-Pass AR Prosody):
+    Synthesizes 2-3 continuation clauses in ONE GPT-SoVITS pass so mid-sentence commas keep natural
+    rising/suspended F0 pitch instead of dropping flat on every clause, then uses Qwen3-ForcedAligner
+    + 5ms minimum-energy valley detection to slice clean per-clause WAVs for exact Remotion beat control.
+    Returns None on any alignment ambiguity so caller seamlessly falls back to per-clause synthesis.
+    """
+    if len(raw_texts) < 2:
+        return None
+    vid, vcfg, eff_preset, ref_wav, ref_txt, ref_lang = resolve_voice_preset(voice, preset, reg)
+    if not os.path.isfile(ref_wav):
+        return None
+    resolved_lang = "en" if eff_preset == "en" else "zh"
+    norm_list = [normalize_tts_text(t, lang=resolved_lang) for t in raw_texts]
+    sep = ", " if resolved_lang == "en" else "，"
+    eos = "." if resolved_lang == "en" else "。"
+    stripped = [t.rstrip("，,、；; ") for t in norm_list]
+    joined = sep.join(stripped)
+    if not joined.endswith(("。", "！", "？", ".", "!", "?")):
+        joined += eos
+
+    aux_refs = resolve_voice_aux_refs(vcfg)
+    aux_sig = ",".join(Path(p).name for p in aux_refs)
+    weight_sig = f"{vid}|{vcfg.get('gpt_weights', '')}|{vcfg.get('sovits_weights', '')}|{Path(ref_wav).name}|{aux_sig}"
+    g_key = sha256_str(f"v6_group_cut0|{weight_sig}|{eff_preset}|{speed:.3f}|{'||'.join(norm_list)}")
+    g_meta_path = cache_dir / f"group_{g_key}.json"
+    sr = 48000
+
+    if g_meta_path.exists():
+        try:
+            g_meta = json.loads(g_meta_path.read_text(encoding="utf-8"))
+            out_cached = []
+            for idx, item in enumerate(g_meta["items"]):
+                wp = cache_dir / item["wav_name"]
+                if not wp.exists():
+                    out_cached = []
+                    break
+                out_cached.append((wp, float(item["duration"]), item["chars"], vid, eff_preset))
+            if len(out_cached) == len(raw_texts):
+                return out_cached
+        except Exception:
+            pass
+
+    ensure_voice_weights_on_server(vid, vcfg)
+    payload = {
+        "text": joined,
+        "text_lang": resolved_lang,
+        "ref_audio_path": ref_wav,
+        "aux_ref_audio_paths": aux_refs,
+        "prompt_text": ref_txt,
+        "prompt_lang": ref_lang,
+        "top_k": 14,
+        "top_p": 0.86,
+        "temperature": 0.70,
+        "text_split_method": "cut0",
+        "batch_size": 1,
+        "speed_factor": speed,
+        "fragment_interval": 0.16,
+        "parallel_infer": False,
+        "repetition_penalty": 1.35,
+        "media_type": "wav",
+        "streaming_mode": False,
+    }
+    raw_tmp = cache_dir / f"raw_grp_{g_key}.wav"
+    pcm48_tmp = cache_dir / f"pcm48_grp_{g_key}.wav"
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:9880/tts",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            raw_tmp.write_bytes(resp.read())
+        subprocess.run([
+            FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(raw_tmp), "-ac", "1", "-ar", str(sr), "-c:a", "pcm_s16le", str(pcm48_tmp)
+        ], check=True)
+        raw_tmp.unlink(missing_ok=True)
+        wav, _ = sf.read(str(pcm48_tmp), dtype="float32")
+        if len(wav) < int(0.6 * sr):
+            pcm48_tmp.unlink(missing_ok=True)
+            return None
+        wav = normalize_clause_rms(wav - float(np.mean(wav)), target_rms=0.085)
+
+        align_lang = "English" if eff_preset == "en" else "Chinese"
+        res = aligner.align(pcm48_tmp, joined, language=align_lang)
+        pcm48_tmp.unlink(missing_ok=True)
+        raw_segs = res.segments or []
+        if len(raw_segs) < len(norm_list) * 2:
+            return None
+
+        # Partition aligned segments across norm_list proportionally by spoken char count
+        target_counts = [max(1, len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", s))) for s in stripped]
+        seg_weights = [max(1, len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", str(sg.get("text", ""))))) for sg in raw_segs]
+        if abs(sum(seg_weights) - sum(target_counts)) > max(4, int(0.25 * sum(target_counts))):
+            return None
+
+        buckets: list[list[dict]] = []
+        seg_idx = 0
+        for b_i, want in enumerate(target_counts):
+            if b_i == len(target_counts) - 1:
+                buckets.append(raw_segs[seg_idx:])
+                break
+            acc = 0
+            b_segs = []
+            while seg_idx < len(raw_segs) - (len(target_counts) - 1 - b_i):
+                b_segs.append(raw_segs[seg_idx])
+                acc += seg_weights[seg_idx]
+                seg_idx += 1
+                if acc >= want:
+                    break
+            if not b_segs:
+                return None
+            buckets.append(b_segs)
+
+        if any(len(b) == 0 for b in buckets):
+            return None
+
+        # Locate clean 5ms minimum-RMS valleys between adjacent clauses
+        total_sec = len(wav) / float(sr)
+        win_5ms = max(1, int(0.005 * sr))
+        boundaries = [max(0.0, float(buckets[0][0]["start"]) - 0.050)]
+        for k in range(len(buckets) - 1):
+            prev_ed = float(buckets[k][-1]["end"])
+            next_st = float(buckets[k + 1][0]["start"])
+            lo_s = max(0.0, min(prev_ed, next_st) - 0.030)
+            hi_s = min(total_sec, max(prev_ed, next_st) + 0.030)
+            i_lo = int(lo_s * sr)
+            i_hi = max(i_lo + win_5ms, int(hi_s * sr))
+            region = wav[i_lo:i_hi]
+            n_w = max(1, len(region) // win_5ms)
+            rms_w = np.sqrt(np.mean(region[:n_w * win_5ms].reshape(n_w, win_5ms) ** 2, axis=1) + 1e-12)
+            best_s = lo_s + (int(np.argmin(rms_w)) + 0.5) * 0.005
+            boundaries.append(best_s)
+        boundaries.append(min(total_sec, float(buckets[-1][-1]["end"]) + 0.055))
+
+        results = []
+        meta_items = []
+        for k, b_segs in enumerate(buckets):
+            c0 = boundaries[k]
+            c1 = max(c0 + 0.25, boundaries[k + 1])
+            s0 = int(round(c0 * sr))
+            s1 = min(len(wav), max(s0 + 1, int(round(c1 * sr))))
+            sub_wav = wav[s0:s1].copy()
+            fade_n = min(int(0.006 * sr), len(sub_wav) // 8)
+            if fade_n > 1:
+                fc = 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_n, dtype=np.float32) / fade_n))
+                sub_wav[:fade_n] *= fc
+                sub_wav[-fade_n:] *= fc[::-1]
+            sub_dur = round(len(sub_wav) / float(sr), 3)
+            sub_chars = [
+                {
+                    "text": sg["text"],
+                    "start": round(max(0.0, min(sub_dur, float(sg["start"]) - c0)), 3),
+                    "end": round(max(0.0, min(sub_dur, float(sg["end"]) - c0)), 3),
+                }
+                for sg in b_segs
+            ]
+            n_u = max(1, count_units(norm_list[k]))
+            ok, _ = is_healthy_clause_audio(sub_wav, sr, sub_chars, n_u)
+            if not ok:
+                return None
+            wav_name = f"group_{g_key}_{k:02d}.wav"
+            wp = cache_dir / wav_name
+            sf.write(str(wp), sub_wav, sr, subtype="PCM_16")
+            results.append((wp, sub_dur, sub_chars, vid, eff_preset))
+            meta_items.append({"wav_name": wav_name, "duration": sub_dur, "chars": sub_chars})
+
+        g_meta_path.write_text(json.dumps({"items": meta_items}, ensure_ascii=False), encoding="utf-8")
+        return results
+    except Exception as exc:
+        raw_tmp.unlink(missing_ok=True)
+        pcm48_tmp.unlink(missing_ok=True)
+        print(f"[GroupProsody Fallback] Group synthesis fell back to single-clause ({exc})")
+        return None
+
+
 def make_warm_sfx(kind: str, sr: int = 48000) -> np.ndarray:
     if kind == "warm_pop":
-        dur = 0.055
+        dur = 0.050
         t = np.linspace(0, dur, int(sr * dur), endpoint=False)
-        freq = np.linspace(310, 140, len(t))
-        env = np.exp(-t * 68.0) * np.sin(np.pi * np.minimum(1.0, t / 0.006) * 0.5)
-        return (np.sin(2 * np.pi * np.cumsum(freq) / sr) * env * 0.075).astype(np.float32)
+        freq = np.linspace(290, 135, len(t))
+        env = np.exp(-t * 72.0) * np.sin(np.pi * np.minimum(1.0, t / 0.006) * 0.5)
+        return (np.sin(2 * np.pi * np.cumsum(freq) / sr) * env * 0.032).astype(np.float32)
     else:
-        dur = 0.13
+        dur = 0.12
         t = np.linspace(0, dur, int(sr * dur), endpoint=False)
         noise = np.random.default_rng(42).normal(0, 1, len(t))
-        sos = signal.butter(3, [220, 1050], btype="bandpass", fs=sr, output="sos")
-        return (signal.sosfilt(sos, noise) * (np.sin(np.pi * (t / dur)) ** 1.8) * 0.028).astype(np.float32)
+        sos = signal.butter(3, [220, 980], btype="bandpass", fs=sr, output="sos")
+        return (signal.sosfilt(sos, noise) * (np.sin(np.pi * (t / dur)) ** 1.8) * 0.016).astype(np.float32)
 
 
 def build_chapters_clone_mode(
@@ -585,6 +868,8 @@ def build_chapters_clone_mode(
     chapters_out = []
     global_offset = 0.0
     chapters_in = proj["chapters"]
+    enable_group_tts = bool(proj.get("coherent_group_tts", True))
+    enable_ambient_bed = bool(proj.get("ambient_bed", False))
 
     for ch_idx, ch in enumerate(chapters_in):
         chunks = [np.zeros(int(0.10 * sr), dtype=np.float32)]
@@ -596,21 +881,70 @@ def build_chapters_clone_mode(
         scenes_in = ch.get("scenes", [])
         for s_idx, sc in enumerate(scenes_in):
             sc_start = cur
-            sfx_list.append((max(0.01, sc_start - 0.055), "soft_transition" if s_idx > 0 else "warm_pop"))
+            # Surgical Micro-SFX Law (~1.5-2.5/min max, zero per-clause pop spam!):
+            # Only trigger at chapter gateway or high-kinetic structural primitives / explicit sc["sfx"]
+            if sc.get("sfx") is True or (sc.get("sfx") is not False and (s_idx == 0 or sc.get("primitive") in KINETIC_SFX_PRIMITIVES)):
+                sfx_list.append((max(0.01, sc_start - 0.045), "warm_pop" if s_idx == 0 else "soft_transition"))
+
             sc_voice = voice_override or sc.get("voice") or ch.get("voice") or default_voice
             preset = sc.get("preset") or proj.get("default_preset", "mix")
             speed = float(sc.get("speed") or speed_default)
             clauses_in = sc.get("clauses", [])
             clauses_out = []
 
+            # Pre-synthesize scene clauses using Coherent Thought-Group batching (2-3 continuation clauses per AR pass)
+            synthed_clauses: list[tuple[Path, float, list, str, str] | None] = [None] * len(clauses_in)
+            idx_c = 0
+            while idx_c < len(clauses_in):
+                cl0 = clauses_in[idx_c]
+                v0 = voice_override or cl0.get("voice") or sc_voice
+                p0 = cl0.get("preset") or preset
+                t0 = (cl0.get("tts_text") or cl0["display_text"]).strip()
+                can_start_group = (
+                    enable_group_tts
+                    and idx_c + 1 < len(clauses_in)
+                    and not t0.endswith(("。", "！", "？", ".", "!", "?", "；", ";"))
+                )
+                if can_start_group:
+                    grp_indices = [idx_c]
+                    grp_texts = [t0]
+                    grp_units = count_units(t0)
+                    j = idx_c + 1
+                    while j < len(clauses_in) and len(grp_indices) < 3:
+                        clj = clauses_in[j]
+                        vj = voice_override or clj.get("voice") or sc_voice
+                        pj = clj.get("preset") or preset
+                        tj = (clj.get("tts_text") or clj["display_text"]).strip()
+                        uj = count_units(tj)
+                        if vj != v0 or pj != p0 or (grp_units + uj) > 42:
+                            break
+                        grp_indices.append(j)
+                        grp_texts.append(tj)
+                        grp_units += uj
+                        j += 1
+                        if tj.endswith(("。", "！", "？", ".", "!", "?", "；", ";")):
+                            break
+                    if len(grp_indices) >= 2:
+                        grp_res = synth_and_align_group(
+                            grp_texts, p0, speed, cache_dir, aligner, voice=v0, reg=reg
+                        )
+                        if grp_res and len(grp_res) == len(grp_indices):
+                            for k_pos, orig_i in enumerate(grp_indices):
+                                synthed_clauses[orig_i] = grp_res[k_pos]
+                            idx_c = grp_indices[-1] + 1
+                            continue
+
+                synthed_clauses[idx_c] = synth_and_align_clause(
+                    t0, p0, speed, cache_dir, aligner, voice=v0, reg=reg
+                )
+                idx_c += 1
+
             for c_idx, cl in enumerate(clauses_in):
                 tts_txt = cl.get("tts_text") or cl["display_text"]
                 disp_txt = cl["display_text"]
-                cl_voice = voice_override or cl.get("voice") or sc_voice
-                cl_preset = cl.get("preset") or preset
-                wav_p, c_dur, rel_chars, used_vid, used_preset = synth_and_align_clause(
-                    tts_txt, cl_preset, speed, cache_dir, aligner, voice=cl_voice, reg=reg
-                )
+                res_tuple = synthed_clauses[c_idx]
+                assert res_tuple is not None
+                wav_p, c_dur, rel_chars, used_vid, used_preset = res_tuple
                 samples, _ = sf.read(str(wav_p), dtype="float32")
                 chunks.append(samples)
 
@@ -618,7 +952,6 @@ def build_chapters_clone_mode(
                     {"text": it["text"], "start": round(cur + it["start"], 3), "end": round(cur + it["end"], 3)}
                     for it in rel_chars
                 ]
-                # Anchor caption strictly to Qwen3-ForcedAligner's exact first-char onset & last-char offset!
                 c_start = abs_chars[0]["start"] if abs_chars else round(cur, 3)
                 c_end = abs_chars[-1]["end"] if abs_chars else round(cur + c_dur, 3)
                 c_obj = {
@@ -634,19 +967,31 @@ def build_chapters_clone_mode(
                 }
                 clauses_out.append(c_obj)
                 captions_payload.append(c_obj)
-                if c_idx > 0:
-                    sfx_list.append((max(0.01, c_start - 0.045), "warm_pop"))
 
                 cur += c_dur
-                # 3-Tier Dynamic Prosody Pause (prevents monotony on 3-15 min videos!)
-                is_question = ("？" in tts_txt) or ("?" in tts_txt)
-                if c_idx < len(clauses_in) - 1:
-                    gap_ms = 240 if is_question else 120
-                elif s_idx < len(scenes_in) - 1:
-                    gap_ms = int(sc.get("pause_after_ms", 420 if is_question else 240))
+                # Determine next spoken clause text (for contrast-pivot pause expansion)
+                next_tts: str | None = None
+                if c_idx + 1 < len(clauses_in):
+                    next_cl = clauses_in[c_idx + 1]
+                    next_tts = next_cl.get("tts_text") or next_cl["display_text"]
+                elif s_idx + 1 < len(scenes_in) and scenes_in[s_idx + 1].get("clauses"):
+                    next_cl = scenes_in[s_idx + 1]["clauses"][0]
+                    next_tts = next_cl.get("tts_text") or next_cl["display_text"]
+
+                is_sc_end = c_idx == len(clauses_in) - 1
+                is_ch_end = is_sc_end and (s_idx == len(scenes_in) - 1)
+                if cl.get("pause_after_ms") is not None:
+                    gap_ms = int(cl["pause_after_ms"])
                 else:
-                    # Macro end-of-chapter breathing reset
-                    gap_ms = int(ch.get("chapter_tail_pause_ms", 560 if len(chapters_in) > 1 else 340))
+                    gap_ms = compute_semantic_pause_ms(
+                        tts_txt=tts_txt,
+                        next_tts_txt=next_tts,
+                        is_scene_end=is_sc_end,
+                        is_chapter_end=is_ch_end,
+                        scene_pause_override=sc.get("pause_after_ms"),
+                        chapter_tail_override=ch.get("chapter_tail_pause_ms"),
+                        multi_chapter=len(chapters_in) > 1,
+                    )
 
                 chunks.append(np.zeros(int((gap_ms / 1000.0) * sr), dtype=np.float32))
                 cur += gap_ms / 1000.0
@@ -662,23 +1007,24 @@ def build_chapters_clone_mode(
                 "data": sc.get("data", {}),
             })
 
-        # Pad dry_arr to exact video frame multiple (sr // fps) to guarantee 0.000ms multi-chapter drift!
         dry_arr = np.concatenate(chunks) if chunks else np.zeros(int(0.5 * sr), dtype=np.float32)
         samples_per_frame = max(1, sr // max(1, fps))
         rem = len(dry_arr) % samples_per_frame
         if rem != 0:
             dry_arr = np.concatenate([dry_arr, np.zeros(samples_per_frame - rem, dtype=np.float32)])
 
-        # Normalize chapter voice track to -16.5 LUFS + mix warm ambient pad & micro-SFX
-        # Include per-scene voice, model weight signatures, preset, speed, pauses, tail pause, fps, and aligned bounds in ch_hash!
         ch_hash_payload = {
-            "v": "v6_steady_v2",
+            "v": "v7_prosody_master_lra35",
             "fps": fps,
             "speed_default": speed_default,
+            "ambient_bed": enable_ambient_bed,
+            "group_tts": enable_group_tts,
             "chapter_tail_pause_ms": ch.get("chapter_tail_pause_ms"),
             "scenes": [
                 {
                     "id": s_out["id"],
+                    "primitive": s_in.get("primitive"),
+                    "sfx": s_in.get("sfx"),
                     "preset": s_in.get("preset") or proj.get("default_preset", "mix"),
                     "speed": float(s_in.get("speed") or speed_default),
                     "pause_after_ms": s_in.get("pause_after_ms"),
@@ -707,7 +1053,7 @@ def build_chapters_clone_mode(
             sf.write(str(tmp_dry), dry_arr, sr, subtype="PCM_16")
             subprocess.run([
                 FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                "-i", str(tmp_dry), "-af", "loudnorm=I=-16.5:TP=-1.2:LRA=5.5",
+                "-i", str(tmp_dry), "-af", PODCAST_MASTER_AF,
                 "-ar", str(sr), "-ac", "1", "-c:a", "pcm_s16le", str(tmp_norm)
             ], check=True)
             norm_v, _ = sf.read(str(tmp_norm), dtype="float32")
@@ -715,12 +1061,14 @@ def build_chapters_clone_mode(
             tmp_norm.unlink(missing_ok=True)
 
             n_len = len(norm_v)
-            t_ax = np.arange(n_len, dtype=np.float32) / sr
-            bed = 0.004 * np.sin(2 * np.pi * 110.0 * t_ax) + 0.0025 * np.sin(2 * np.pi * 164.81 * t_ax)
-            fn = min(int(0.45 * sr), n_len // 4)
-            bed[:fn] *= np.linspace(0, 1, fn)
-            bed[-fn:] *= np.linspace(1, 0, fn)
-            mix = norm_v + bed
+            mix = norm_v.copy()
+            if enable_ambient_bed:
+                t_ax = np.arange(n_len, dtype=np.float32) / sr
+                bed = 0.002 * np.sin(2 * np.pi * 110.0 * t_ax)
+                fn = min(int(0.45 * sr), n_len // 4)
+                bed[:fn] *= np.linspace(0, 1, fn)
+                bed[-fn:] *= np.linspace(1, 0, fn)
+                mix = mix + bed
             for st, sk in sfx_list:
                 sfx = make_warm_sfx(sk, sr=sr)
                 i0 = int(st * sr)
@@ -754,22 +1102,21 @@ def build_chapters_clone_mode(
 def build_chapters_passthrough_mode(proj: dict, raw_voice_path: Path, cache_dir: Path) -> list[dict]:
     """
     Mode 2: Human Raw Recording Passthrough (.wav/.m4a/.mp3).
-    Auto-trims stutters/dead-air (>550ms -> 280ms breath), normalizes to -16.5 LUFS,
+    Auto-trims stutters/dead-air (>550ms -> 280ms breath), masters to -16.5 LUFS (LRA 3.5 LU),
     force-aligns full script with Qwen3-ForcedAligner, and slices into chapter chunks.
     """
     from rapid_mlx.audio.stt import STTEngine
 
     sr = 48000
-    clean_full = cache_dir / f"human_clean_{sha256_str(str(raw_voice_path) + str(raw_voice_path.stat().st_mtime))}.wav"
+    clean_full = cache_dir / f"human_clean_v2_{sha256_str(str(raw_voice_path) + str(raw_voice_path.stat().st_mtime))}.wav"
     if not clean_full.exists():
         subprocess.run([
             FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
             "-i", str(raw_voice_path),
             "-af", (
-                "highpass=f=80,"
                 "silenceremove=start_periods=1:start_duration=0.05:start_threshold=-40dB:start_silence=0.08:"
                 "stop_periods=-1:stop_duration=0.55:stop_threshold=-40dB:leave_silence=0.28,"
-                "loudnorm=I=-16.5:TP=-1.2:LRA=5.5"
+                + PODCAST_MASTER_AF
             ),
             "-ac", "1", "-ar", str(sr), "-c:a", "pcm_s16le", str(clean_full)
         ], check=True)
@@ -1017,8 +1364,8 @@ def main():
             spec_tmp.write_text(spec_json, encoding="utf-8")
             subprocess.run(["node", str(CAPTURE_SCRIPT), "--spec", str(spec_tmp)], check=True)
 
-    # 2. Synthesize & align chapters (clone or human passthrough mode)
-    speed = args.speed or float(proj.get("speed_factor", 1.12))
+    # 2. Synthesize & align chapters (clone or human passthrough mode; calibrated 1.06 speed + 3-tier breath pauses -> ~350 CPM)
+    speed = args.speed or float(proj.get("speed_factor", 1.06))
     fps = int(proj.get("fps", 30))
     voice_file = args.voice_file or proj.get("raw_voice_path")
     if voice_file or proj.get("voice_mode") == "passthrough":
@@ -1069,6 +1416,7 @@ def main():
             "globalTotalDurationSec": ch["globalTotalDurationSec"],
             "audioFile": f"{job_rel}/{audio_name}",
             "showWaveform": bool(proj.get("show_waveform", True)),
+            "subtitleFontSize": int(proj.get("subtitle_font_size", 56)),
             "waveform": waveform_frames,
             "scenes": staged_scenes,
             "captions": ch["captions"],

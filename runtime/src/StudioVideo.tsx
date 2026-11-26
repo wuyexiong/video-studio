@@ -37,7 +37,16 @@ export type PrimitiveType =
   | 'defense_boundary_flow'
   | 'row_permission_table'
   | 'acronym_token_slot'
-  | 'metaphor_canvas';
+  | 'metaphor_canvas'
+  | 'before_after_transformer'
+  | 'synergy_puzzle_pair'
+  | 'multi_perspective_ring'
+  | 'convergent_hub_bus'
+  | 'arc_gauge_audit'
+  | 'idle_waste_vs_event_wake'
+  | 'binary_decision_tree'
+  | 'spotlight_window_tour'
+  | 'vignette_metaphor_stage';
 
 export interface CharTiming {
   text: string;
@@ -75,6 +84,7 @@ export interface ChapterRenderPayload {
   globalTotalDurationSec: number;
   audioFile: string; // filename inside runtime/public/render_job/
   showWaveform?: boolean;
+  subtitleFontSize?: number;
   waveform?: number[][];
   scenes: StudioScene[];
   captions: ClauseTiming[];
@@ -82,31 +92,37 @@ export interface ChapterRenderPayload {
 
 const TOKENS = {
   canvas: '#262626',
-  card: '#303030',
-  cardElevated: '#36363A',
+  card: '#323232',
+  cardElevated: '#3B3B3D',
   paper: '#F7F6F2',
   paperInk: '#161618',
-  border: '#454548',
-  ink: '#F5F5F7',
-  inkSecondary: '#A1A1AA',
-  inkMuted: '#6E6E73',
-  amber: '#F59E0B',
-  amberSoft: 'rgba(245, 158, 11, 0.13)',
-  amberBorder: 'rgba(245, 158, 11, 0.48)',
-  emerald: '#34D399',
-  emeraldSoft: 'rgba(52, 211, 153, 0.11)',
-  emeraldBorder: 'rgba(52, 211, 153, 0.45)',
-  coral: '#EF5350',
-  coralSoft: 'rgba(239, 83, 80, 0.11)',
-  coralBorder: 'rgba(239, 83, 80, 0.45)',
-  subtitleBg: 'rgba(15, 15, 16, 0.88)',
-  fontSans: '"PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", -apple-system, sans-serif',
-  fontMono: '"SF Mono", "JetBrains Mono", "Menlo", "Noto Sans Mono CJK SC", ui-monospace, monospace',
+  border: '#3D3D3D',
+  ink: '#FFFFFF',
+  inkSecondary: '#A3A3A3',
+  inkMuted: '#7A7A7A',
+  amber: '#FE8A00',
+  amberSoft: 'rgba(254, 138, 0, 0.14)',
+  amberBorder: 'rgba(254, 138, 0, 0.50)',
+  emerald: '#139F6B',
+  emeraldMint: '#17B7A6',
+  emeraldSoft: 'rgba(19, 159, 107, 0.15)',
+  emeraldBorder: 'rgba(23, 183, 166, 0.48)',
+  coral: '#E05549',
+  coralSoft: 'rgba(224, 85, 73, 0.14)',
+  coralBorder: 'rgba(224, 85, 73, 0.48)',
+  slate: '#5E7898',
+  slateLight: '#8BB6EE',
+  slateFill: '#3B4252',
+  violet: '#7C5BFD',
+  subtitleBg: 'rgba(9, 9, 9, 0.94)',
+  fontSans: '"Noto Sans TC", "PingFang TC", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", -apple-system, sans-serif',
+  fontMono: '"JetBrains Mono", "SF Mono", "Menlo", "Noto Sans Mono CJK SC", ui-monospace, monospace',
 };
 
 const SPRING_SNAPPY = { damping: 28, stiffness: 185, mass: 0.85, overshootClamping: true };
 const SPRING_SILKY = { damping: 32, stiffness: 145, mass: 0.92, overshootClamping: true };
 const SPRING_BOUNCE = { damping: 26, stiffness: 190, mass: 0.82, overshootClamping: true };
+const SPRING_PUZZLE = { damping: 24, stiffness: 210, mass: 0.8, overshootClamping: false };
 
 function settle(p: number): number {
   return p >= 0.995 ? 1 : p;
@@ -122,8 +138,50 @@ function formatRollingMetric(raw: string, progress: number): string {
       const decimals = match.split('.')[1]?.length || 1;
       return cur.toFixed(decimals);
     }
-    return String(Math.round(cur)).padStart(match.length, '0');
+    return String(Math.round(cur));
   });
+}
+
+type FocusTarget = number | 'all' | 'overview';
+
+function resolveFocusedTarget(
+  clauseIdx: number,
+  numClauses: number,
+  numItems: number,
+  customFocus?: FocusTarget[]
+): FocusTarget {
+  if (Array.isArray(customFocus) && customFocus[clauseIdx] !== undefined) {
+    return customFocus[clauseIdx];
+  }
+  if (numItems <= 0) return 0;
+  if (numClauses === numItems + 1 && numItems >= 2) {
+    return clauseIdx === 0 ? 'overview' : Math.min(numItems - 1, clauseIdx - 1);
+  }
+  return Math.min(numItems - 1, Math.max(0, clauseIdx));
+}
+
+function getSmoothClauseValue(
+  scene: StudioScene,
+  frame: number,
+  fps: number,
+  valueAtClause: (clauseIdx: number) => number
+): number {
+  const n = Math.max(1, scene.clauses.length);
+  let val = valueAtClause(0);
+  for (let k = 1; k < n; k++) {
+    const prevV = valueAtClause(k - 1);
+    const nextV = valueAtClause(k);
+    if (Math.abs(nextV - prevV) > 0.001) {
+      const triggerF = Math.max(2, Math.round((scene.clauses[k].start - scene.start - 0.04) * fps));
+      if (frame >= triggerF) {
+        const sp = settle(spring({ frame: frame - triggerF, fps, config: SPRING_SILKY }));
+        val += (nextV - prevV) * sp;
+      }
+    }
+  }
+  if (Math.abs(val - 1) <= 0.005) return 1;
+  if (Math.abs(val) <= 0.005) return 0;
+  return Math.max(0, Math.min(1, val));
 }
 
 const SceneStageTransition: React.FC<{ durationInFrames: number; children: React.ReactNode }> = ({
@@ -190,17 +248,28 @@ function getActiveClauseIdx(scene: StudioScene, frame: number, fps: number): num
   return active;
 }
 
-// Universal Top Scene Thesis Header & Context Pill
+// Universal Top Scene Thesis Header + Context Pill + Connected Multi-Stage Stepper Bar
 const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  if (!d.topPill && !d.topTitle) return null;
+  const rawSteps: Array<string | { label: string; status?: 'done' | 'active' | 'pending' }> = Array.isArray(d.stepper)
+    ? d.stepper
+    : [];
+  const subSteps: string[] = Array.isArray(d.subStepper) ? d.subStepper : [];
+
+  if (!d.topPill && !d.topTitle && rawSteps.length === 0) return null;
 
   const enter = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
   const accentPal = tonePalette(d.topAccentTone || 'amber');
   const titleStr = String(d.topTitle || '');
   const accentWord = String(d.topAccentWord || '');
+  const activeStepIdx = typeof d.activeStepIndex === 'number' ? d.activeStepIndex : 0;
+  const activeSubIdx =
+    typeof d.activeSubStepIndex === 'number'
+      ? d.activeSubStepIndex
+      : Math.min(Math.max(0, subSteps.length - 1), activeClause);
 
   const renderTitle = () => {
     if (!accentWord || !titleStr.includes(accentWord)) {
@@ -220,7 +289,7 @@ const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
     <div
       style={{
         position: 'absolute',
-        top: 86,
+        top: rawSteps.length > 0 ? 76 : 86,
         left: 0,
         right: 0,
         display: 'flex',
@@ -233,6 +302,108 @@ const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
         pointerEvents: 'none',
       }}
     >
+      {rawSteps.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+            {rawSteps.map((st, idx) => {
+              const label = typeof st === 'string' ? st : st.label;
+              const status: 'done' | 'active' | 'pending' =
+                typeof st === 'object' && st.status
+                  ? st.status
+                  : idx < activeStepIdx
+                  ? 'done'
+                  : idx === activeStepIdx
+                  ? 'active'
+                  : 'pending';
+              const isDone = status === 'done';
+              const isActive = status === 'active';
+              return (
+                <React.Fragment key={idx}>
+                  <div
+                    style={{
+                      minWidth: 210,
+                      height: 46,
+                      padding: '0 28px',
+                      borderRadius: 999,
+                      background: isActive ? TOKENS.amber : '#38383A',
+                      border: `1.5px solid ${isActive ? TOKENS.amber : '#4A4A4E'}`,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 10,
+                      fontSize: 23,
+                      fontWeight: 800,
+                      color: isActive ? '#141416' : isDone ? TOKENS.ink : TOKENS.inkSecondary,
+                      boxShadow: isActive ? '0 8px 24px rgba(254, 138, 0, 0.28)' : 'none',
+                    }}
+                  >
+                    {isDone && (
+                      <span
+                        style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: '50%',
+                          background: TOKENS.emeraldMint,
+                          color: '#0B1F1A',
+                          fontSize: 14,
+                          fontWeight: 900,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        ✓
+                      </span>
+                    )}
+                    <span>{label}</span>
+                  </div>
+                  {idx < rawSteps.length - 1 && (
+                    <div
+                      style={{
+                        width: 38,
+                        height: 2.5,
+                        background: isDone ? TOKENS.emerald : '#4A4A4E',
+                      }}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {subSteps.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              {subSteps.map((sub, sIdx) => {
+                const isSubActive = sIdx === activeSubIdx;
+                const isSubDone = sIdx < activeSubIdx;
+                return (
+                  <div
+                    key={sIdx}
+                    style={{
+                      minWidth: 168,
+                      height: 44,
+                      padding: '0 24px',
+                      borderRadius: 999,
+                      background: isSubActive ? TOKENS.amber : isSubDone ? '#343438' : 'transparent',
+                      border: isSubActive
+                        ? `1.5px solid ${TOKENS.amber}`
+                        : `1.5px dashed ${isSubDone ? TOKENS.emerald : '#66666B'}`,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 21,
+                      fontWeight: 800,
+                      color: isSubActive ? '#141416' : TOKENS.inkSecondary,
+                    }}
+                  >
+                    {sub}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       {d.topPill && (
         <div
           style={{
@@ -242,7 +413,7 @@ const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
             padding: '10px 26px',
             borderRadius: 999,
             background: '#322F2B',
-            border: '1.5px solid rgba(245, 158, 11, 0.35)',
+            border: '1.5px solid rgba(254, 138, 0, 0.38)',
             fontSize: 24,
             fontWeight: 800,
             color: TOKENS.ink,
@@ -271,7 +442,7 @@ const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
       {d.topTitle && (
         <div
           style={{
-            fontSize: 54,
+            fontSize: 52,
             fontWeight: 800,
             color: TOKENS.ink,
             letterSpacing: '-0.015em',
@@ -412,24 +583,31 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene }> = ({ scene }) => {
             </div>
           )}
           {pills.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10, opacity: pEnter }}>
-              {pills.map((p, i) => (
-                <span
-                  key={i}
-                  style={{
-                    padding: '8px 18px',
-                    borderRadius: 999,
-                    background: i === pills.length - 1 ? TOKENS.amberSoft : TOKENS.card,
-                    border: `1px solid ${i === pills.length - 1 ? TOKENS.amberBorder : TOKENS.border}`,
-                    color: i === pills.length - 1 ? TOKENS.amber : TOKENS.inkSecondary,
-                    fontFamily: TOKENS.fontMono,
-                    fontSize: 20,
-                    fontWeight: 600,
-                  }}
-                >
-                  {p}
-                </span>
-              ))}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10 }}>
+              {pills.map((p, i) => {
+                const pillStart = getBeatFrame(scene, Math.min(2, scene.clauses.length - 1), fps, 0.52) + i * 6;
+                const pillP = settle(spring({ frame: frame - pillStart, fps, config: SPRING_SILKY }));
+                const isAccentPill = i === 0 || i === pills.length - 1;
+                return (
+                  <span
+                    key={i}
+                    style={{
+                      padding: '9px 20px',
+                      borderRadius: 999,
+                      background: i === pills.length - 1 ? TOKENS.amberSoft : TOKENS.card,
+                      border: `1px solid ${isAccentPill ? TOKENS.amberBorder : TOKENS.border}`,
+                      color: i === pills.length - 1 ? TOKENS.amber : TOKENS.ink,
+                      fontFamily: TOKENS.fontMono,
+                      fontSize: 20,
+                      fontWeight: 600,
+                      opacity: pillP,
+                      transform: pillP === 1 ? 'none' : `translate3d(0, ${interpolate(pillP, [0, 1], [14, 0]).toFixed(2)}px, 0)`,
+                    }}
+                  >
+                    {p}
+                  </span>
+                );
+              })}
             </div>
           )}
         </div>
@@ -438,24 +616,24 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   );
 };
 
-// 2. persona_quote — Speaker / Founder Avatar Shift + Breathing Halo + Clause-Synced Quote Underline
+// 2. persona_quote — Centered Avatar Intro -> Silky Left Glide + Breathing Halo + Quote Underline
 const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
   const badges: string[] = Array.isArray(d.badges) ? d.badges : [];
-  const beat2 = getBeatFrame(scene, 1, fps, 0.36);
+  const beat2 = getBeatFrame(scene, 1, fps, 0.34);
   const beat3 = getBeatFrame(scene, Math.min(2, scene.clauses.length - 1), fps, 0.62);
-  const activeClause = getActiveClauseIdx(scene, frame, fps);
 
-  const avEnter = spring({ frame, fps, config: SPRING_SILKY });
-  const shift = spring({ frame: frame - 8, fps, config: SPRING_SILKY });
-  const quoteEnter = spring({ frame: frame - beat2, fps, config: SPRING_SILKY });
-  const underlineP = interpolate(frame, [beat3 - 4, beat3 + 24], [0, 1], {
+  const avEnter = settle(spring({ frame, fps, config: SPRING_SILKY }));
+  const quoteEnter = settle(spring({ frame: frame - beat2, fps, config: SPRING_SILKY }));
+  const avatarCenterOffset = d.quote ? interpolate(quoteEnter, [0, 1], [230, 0]) : 0;
+  const underlineP = interpolate(frame, [beat3 - 2, beat3 + 24], [0, 1], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
     easing: Easing.out(Easing.cubic),
   });
+  const quoteEmphasis = getSmoothClauseValue(scene, frame, fps, (c) => (c >= Math.min(2, scene.clauses.length - 1) ? 1 : 0));
   const haloPulse = 0.5 + 0.5 * Math.sin(frame / 14);
 
   return (
@@ -469,7 +647,7 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           transform: 'translateY(-24px)',
         }}
       >
-        {/* Circular Avatar Badge with Breathing Orbital Ring */}
+        {/* Circular Avatar Badge (Starts near center on Clause 0, glides left cleanly as Quote unfolds!) */}
         <div
           style={{
             display: 'flex',
@@ -477,7 +655,10 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
             alignItems: 'center',
             gap: 14,
             opacity: avEnter,
-            transform: `scale(${interpolate(avEnter, [0, 1], [0.86, 1])})`,
+            transform:
+              avEnter === 1 && avatarCenterOffset === 0
+                ? 'none'
+                : `translate3d(${avatarCenterOffset.toFixed(2)}px, 0, 0) scale(${interpolate(avEnter, [0, 1], [0.88, 1]).toFixed(4)})`,
           }}
         >
           <div style={{ position: 'relative', width: 184, height: 184, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -539,25 +720,34 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
         </div>
 
         {/* Right Progressive Pills + Quote Card */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 800 }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 18,
+            maxWidth: 800,
+            opacity: quoteEnter,
+            transform: quoteEnter === 1 ? 'none' : `translate3d(${interpolate(quoteEnter, [0, 1], [28, 0]).toFixed(2)}px, 0, 0)`,
+          }}
+        >
           {badges.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
               {badges.map((b, idx) => {
-                const p = spring({ frame: frame - (8 + idx * 6), fps, config: SPRING_SILKY });
-                const isSpotlight = activeClause === idx;
+                const p = settle(spring({ frame: frame - (beat2 + idx * 5), fps, config: SPRING_SILKY }));
+                const focusW = getSmoothClauseValue(scene, frame, fps, (c) => (c === idx + 1 ? 1 : 0));
                 return (
                   <div
                     key={idx}
                     style={{
                       padding: '10px 20px',
                       borderRadius: 12,
-                      background: isSpotlight ? TOKENS.amberSoft : TOKENS.card,
-                      border: `1.5px solid ${isSpotlight ? TOKENS.amberBorder : TOKENS.border}`,
+                      background: focusW > 0.3 ? `rgba(245, 158, 11, ${(0.05 + 0.1 * focusW).toFixed(3)})` : TOKENS.card,
+                      border: `1.5px solid ${focusW > 0.4 ? TOKENS.amberBorder : TOKENS.border}`,
                       fontSize: 22,
                       fontWeight: 700,
-                      color: isSpotlight ? TOKENS.amber : TOKENS.ink,
+                      color: focusW > 0.5 ? TOKENS.amber : TOKENS.ink,
                       opacity: p,
-                      transform: p >= 0.995 ? 'none' : `translate3d(${interpolate(p, [0, 1], [18, 0]).toFixed(2)}px, 0, 0)`,
+                      transform: p === 1 ? 'none' : `translate3d(${interpolate(p, [0, 1], [16, 0]).toFixed(2)}px, 0, 0)`,
                     }}
                   >
                     {b}
@@ -573,15 +763,11 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                 position: 'relative',
                 overflow: 'hidden',
                 background: TOKENS.card,
-                border: `1.5px solid ${activeClause >= 2 ? TOKENS.amber : TOKENS.amberBorder}`,
+                border: `1.5px solid ${quoteEmphasis > 0.5 ? TOKENS.amber : TOKENS.amberBorder}`,
                 borderRadius: 18,
                 padding: '30px 34px',
-                opacity: badges.length ? quoteEnter : shift,
-                transform:
-                  (badges.length ? quoteEnter : shift) >= 0.995
-                    ? 'none'
-                    : `translate3d(0, ${interpolate(badges.length ? quoteEnter : shift, [0, 1], [22, 0]).toFixed(2)}px, 0)`,
-                boxShadow: activeClause >= 2 ? '0 24px 56px rgba(0,0,0,0.48), 0 0 28px rgba(245, 158, 11, 0.12)' : '0 16px 40px rgba(0,0,0,0.32)',
+                transform: quoteEmphasis === 0 ? 'none' : `translate3d(0, ${(-4 * quoteEmphasis).toFixed(2)}px, 0)`,
+                boxShadow: `0 24px 56px rgba(0,0,0,0.46), 0 0 ${Math.round(28 * quoteEmphasis)}px rgba(245, 158, 11, ${(0.15 * quoteEmphasis).toFixed(3)})`,
               }}
             >
               <div style={{ fontFamily: TOKENS.fontMono, fontSize: 46, lineHeight: 0.8, color: TOKENS.amber, marginBottom: 10 }}>
@@ -590,7 +776,6 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
               <div style={{ fontSize: 36, fontWeight: 700, color: TOKENS.ink, lineHeight: 1.44 }}>
                 {d.quote}
               </div>
-              {/* Animated Amber Underline Progress Bar on Quote Punchline */}
               <div
                 style={{
                   marginTop: 16,
@@ -763,14 +948,15 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
   );
 };
 
-// 4. flow_3node — Clause-Synced Progressive SVG Architecture Flow + Traveling Signal Pulse
+// 4. flow_3node — Smart Beat-Aligned Progressive SVG Architecture Flow + Bidirectional Smooth Focus
 const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const nodes: Array<{ tag?: string; title: string; subtitle?: string; bigValue?: string; badge?: string; tone?: Tone }> =
     Array.isArray(scene.data?.nodes) ? scene.data.nodes.slice(0, 4) : [];
-  const activeClause = getActiveClauseIdx(scene, frame, fps);
-  const focusedNodeIdx = Math.min(nodes.length - 1, Math.max(0, activeClause));
+  const customFocus: FocusTarget[] | undefined = scene.data?.clauseFocus;
+  const numClauses = Math.max(1, scene.clauses.length);
+  const hasIntroOverview = !customFocus && numClauses === nodes.length + 1 && nodes.length >= 2;
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -784,40 +970,54 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
         }}
       >
         {nodes.map((nd, idx) => {
-          const startF = idx === 0 ? 0 : getBeatFrame(scene, Math.min(idx, scene.clauses.length - 1), fps, idx / Math.max(1, nodes.length));
-          const enter = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
-          const isFocused = idx === focusedNodeIdx && frame >= startF;
-          const isRevealed = frame >= startF - 2;
-          const focusP = spring({ frame: frame - (isFocused ? startF : 0), fps, config: SPRING_SILKY });
-          const lineP = interpolate(frame, [startF + 2, startF + 18], [0, 1], {
+          const startF = hasIntroOverview
+            ? idx * 6
+            : idx === 0
+            ? 0
+            : getBeatFrame(scene, Math.min(idx, numClauses - 1), fps, idx / Math.max(1, nodes.length));
+          const enter = settle(spring({ frame: frame - startF, fps, config: SPRING_SILKY }));
+          const focusW = getSmoothClauseValue(scene, frame, fps, (c) => {
+            const target = resolveFocusedTarget(c, numClauses, nodes.length, customFocus);
+            return target === 'all' || target === idx ? 1 : 0;
+          });
+          const visW = getSmoothClauseValue(scene, frame, fps, (c) => {
+            const target = resolveFocusedTarget(c, numClauses, nodes.length, customFocus);
+            if (target === 'all' || target === idx) return 1;
+            if (target === 'overview') return 0.86;
+            if (typeof target === 'number' && idx < target) return 0.64;
+            return hasIntroOverview ? 0.56 : 0.25;
+          });
+
+          const lineP = interpolate(frame, [startF + 3, startF + 18], [0, 1], {
             extrapolateLeft: 'clamp',
             extrapolateRight: 'clamp',
             easing: Easing.out(Easing.cubic),
           });
           const pal = tonePalette(nd.tone || (idx === 0 ? 'amber' : 'neutral'));
-          const isHighlight = nd.tone === 'emerald' || nd.tone === 'coral' || isFocused;
+          const isTinted = nd.tone === 'emerald' || nd.tone === 'coral' || focusW > 0.35;
           const pulseX = ((frame * 2.2) % 66);
+          const liftY = enter === 1 ? -6 * focusW : interpolate(enter, [0, 1], [20, -6 * focusW]);
 
           return (
             <React.Fragment key={idx}>
               <div
                 style={{
                   width: Math.min(430, Math.floor(1520 / Math.max(2, nodes.length))),
-                  background: isHighlight ? pal.bg : TOKENS.card,
-                  border: `2px solid ${isHighlight ? pal.fg : TOKENS.border}`,
-                  borderLeft: idx === 0 && !isHighlight ? `4px solid ${TOKENS.amber}` : undefined,
+                  minHeight: 205,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  background: isTinted ? pal.bg : TOKENS.card,
+                  border: `2px solid ${focusW > 0.45 ? pal.fg : isTinted ? pal.border : TOKENS.border}`,
+                  borderLeft: idx === 0 && !isTinted ? `4px solid ${TOKENS.amber}` : undefined,
                   borderRadius: 18,
                   padding: '26px 28px',
-                  opacity: isRevealed ? (isFocused || activeClause >= nodes.length ? enter : enter * 0.68) : 0.08,
-                  transform:
-                    enter >= 0.995
-                      ? isFocused
-                        ? 'translate3d(0, -4px, 0)'
-                        : 'none'
-                      : `translate3d(0, ${interpolate(enter, [0, 1], [20, isFocused ? -4 : 0]).toFixed(2)}px, 0)`,
-                  boxShadow: isFocused
-                    ? `0 24px 54px rgba(0,0,0,0.48), 0 0 26px ${pal.bg}`
-                    : '0 12px 30px rgba(0,0,0,0.25)',
+                  opacity: enter * visW,
+                  transform: Math.abs(liftY) < 0.05 ? 'none' : `translate3d(0, ${liftY.toFixed(2)}px, 0)`,
+                  boxShadow:
+                    focusW > 0.05
+                      ? `0 24px 54px rgba(0,0,0,${(0.25 + 0.25 * focusW).toFixed(2)}), 0 0 ${Math.round(28 * focusW)}px ${pal.bg}`
+                      : '0 12px 30px rgba(0,0,0,0.25)',
                 }}
               >
                 {nd.tag && (
@@ -880,16 +1080,30 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   );
 };
 
-// 5. matrix_compare — Clause-Synced Spotlight Column Comparison Matrix (Active Column Lift & Focus)
+// 5. matrix_compare — Bidirectional Smooth Column & Sub-Item Spotlight Matrix
 const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const cols: Array<{ header: string; tone?: Tone; items: Array<{ title: string; detail?: string; badge?: string }> }> =
     Array.isArray(scene.data?.columns) ? scene.data.columns.slice(0, 3) : [];
-  const activeClause = getActiveClauseIdx(scene, frame, fps);
+  const customFocus: FocusTarget[] | undefined = scene.data?.clauseFocus;
+  const itemFocusMap: Array<[number, number] | null> | undefined = scene.data?.itemFocus;
+  const numClauses = Math.max(1, scene.clauses.length);
 
-  const showAllTogether = scene.clauses.length > cols.length && activeClause === scene.clauses.length - 1 && cols.length === 2;
-  const activeColIdx = Math.min(cols.length - 1, Math.max(0, activeClause - (scene.clauses.length > cols.length ? 1 : 0)));
+  const defaultColTarget = (c: number): FocusTarget => {
+    if (Array.isArray(customFocus) && customFocus[c] !== undefined) return customFocus[c];
+    if (cols.length === 2 && numClauses === 4) {
+      if (c === 0) return 'overview';
+      if (c === 1) return 0;
+      if (c === 2) return 1;
+      return 'all';
+    }
+    if (cols.length === 3 && numClauses === 4) {
+      if (c < 3) return c;
+      return 'all';
+    }
+    return resolveFocusedTarget(c, numClauses, cols.length);
+  };
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: '0 110px' }}>
@@ -904,15 +1118,22 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
         }}
       >
         {cols.map((col, cIdx) => {
-          const enter = spring({ frame: frame - cIdx * 7, fps, config: SPRING_SILKY });
+          const enter = settle(spring({ frame: frame - cIdx * 6, fps, config: SPRING_SILKY }));
           const pal = tonePalette(col.tone || 'neutral');
           const tinted = col.tone && col.tone !== 'neutral';
-          const isFocused = showAllTogether || cIdx === activeColIdx;
-          const focusSpring = spring({
-            frame: frame - getBeatFrame(scene, Math.min(cIdx, scene.clauses.length - 1), fps),
-            fps,
-            config: SPRING_SILKY,
+
+          const focusW = getSmoothClauseValue(scene, frame, fps, (c) => {
+            const t = defaultColTarget(c);
+            return t === 'all' || t === cIdx ? 1 : 0;
           });
+          const visW = getSmoothClauseValue(scene, frame, fps, (c) => {
+            const t = defaultColTarget(c);
+            if (t === 'all' || t === cIdx) return 1;
+            if (t === 'overview') return 0.88;
+            return 0.50;
+          });
+          const liftY = enter === 1 ? -6 * focusW : interpolate(enter, [0, 1], [22, -6 * focusW]);
+          const barWidthPct = Math.round(24 + 48 * focusW);
 
           return (
             <div
@@ -923,25 +1144,20 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                 gap: 14,
                 padding: '20px 18px',
                 borderRadius: 20,
-                background: isFocused ? 'rgba(255,255,255,0.025)' : 'transparent',
-                border: `1.5px solid ${isFocused ? pal.border : 'rgba(255,255,255,0.05)'}`,
-                opacity: enter * (isFocused ? 1 : 0.54),
-                transform:
-                  enter >= 0.995
-                    ? isFocused
-                      ? 'translate3d(0, -4px, 0)'
-                      : 'none'
-                    : `translate3d(0, ${interpolate(enter, [0, 1], [22, isFocused ? -4 : 0]).toFixed(2)}px, 0)`,
-                boxShadow: isFocused ? '0 24px 56px rgba(0,0,0,0.42)' : 'none',
+                background: `rgba(255, 255, 255, ${(0.03 * focusW).toFixed(3)})`,
+                border: `1.5px solid ${focusW > 0.45 ? pal.border : 'rgba(255,255,255,0.06)'}`,
+                opacity: enter * visW,
+                transform: Math.abs(liftY) < 0.05 ? 'none' : `translate3d(0, ${liftY.toFixed(2)}px, 0)`,
+                boxShadow: focusW > 0.05 ? `0 24px 56px rgba(0,0,0,${(0.44 * focusW).toFixed(2)})` : 'none',
               }}
             >
               <div
                 style={{
                   height: 4,
-                  width: isFocused ? `${Math.round(interpolate(focusSpring, [0, 1], [35, 72]))}%` : '24%',
+                  width: `${barWidthPct}%`,
                   alignSelf: 'center',
                   borderRadius: 999,
-                  background: isFocused ? pal.fg : TOKENS.border,
+                  background: focusW > 0.35 ? pal.fg : TOKENS.border,
                   marginBottom: 2,
                 }}
               />
@@ -949,18 +1165,28 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                 {col.header}
               </div>
               {(col.items || []).map((it, rIdx) => {
-                const itemP = spring({ frame: frame - (cIdx * 7 + rIdx * 5 + 4), fps, config: SPRING_SILKY });
+                const itemP = settle(spring({ frame: frame - (cIdx * 6 + rIdx * 5 + 4), fps, config: SPRING_SILKY }));
+                const subFocusW = Array.isArray(itemFocusMap)
+                  ? getSmoothClauseValue(scene, frame, fps, (c) => {
+                      const pair = itemFocusMap[c];
+                      if (!pair) return 1;
+                      if (pair[0] !== cIdx) return 1;
+                      return pair[1] === rIdx ? 1 : 0.58;
+                    })
+                  : 1;
+                const itemActive = focusW > 0.5 && subFocusW > 0.8;
+
                 return (
                   <div
                     key={rIdx}
                     style={{
                       background: tinted ? pal.bg : TOKENS.card,
-                      border: `1.5px solid ${isFocused && tinted ? pal.fg : tinted ? pal.border : TOKENS.border}`,
-                      borderLeft: !tinted ? `4px solid ${isFocused ? TOKENS.amber : TOKENS.border}` : undefined,
+                      border: `1.5px solid ${itemActive && tinted ? pal.fg : tinted ? pal.border : TOKENS.border}`,
+                      borderLeft: !tinted ? `4px solid ${itemActive ? TOKENS.amber : TOKENS.border}` : undefined,
                       borderRadius: 14,
                       padding: '20px 22px',
-                      opacity: itemP,
-                      transform: `translateY(${interpolate(itemP, [0, 1], [12, 0])}px)`,
+                      opacity: itemP * subFocusW,
+                      transform: itemP === 1 ? 'none' : `translate3d(0, ${interpolate(itemP, [0, 1], [12, 0]).toFixed(2)}px, 0)`,
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
@@ -970,9 +1196,9 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                           style={{
                             padding: '4px 12px',
                             borderRadius: 999,
-                            background: isFocused ? pal.fg : pal.bg,
+                            background: itemActive ? pal.fg : pal.bg,
                             border: `1px solid ${pal.border}`,
-                            color: isFocused && col.tone !== 'neutral' ? '#141416' : pal.fg,
+                            color: itemActive && col.tone !== 'neutral' ? '#141416' : pal.fg,
                             fontFamily: TOKENS.fontMono,
                             fontSize: 16,
                             fontWeight: 800,
@@ -998,7 +1224,7 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
   );
 };
 
-// 6. focus_hud_demo — Dimmed/Blurred Background Context + Foreground Interactive HUD Click (Compact Balanced Buttons)
+// 6. focus_hud_demo — Unobstructed Cursor + Click Press-Bounce & Emerald Ripple Ring + Backdrop Spotlight
 const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -1013,9 +1239,29 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const beat4 = getBeatFrame(scene, Math.min(3, scene.clauses.length - 1), fps, 0.78);
   const clickFrame = scene.clauses.length >= 4 ? beat4 : beat3;
 
-  const focus = spring({ frame: frame - (beat2 - 4), fps, config: SPRING_SILKY });
-  const hoverP = spring({ frame: frame - beat3, fps, config: SPRING_SILKY });
-  const click = spring({ frame: frame - clickFrame, fps, config: SPRING_BOUNCE });
+  const focus = settle(spring({ frame: frame - (beat2 - 4), fps, config: SPRING_SILKY }));
+  const hoverP = settle(spring({ frame: frame - beat3, fps, config: SPRING_SILKY }));
+  const click = settle(spring({ frame: frame - clickFrame, fps, config: SPRING_BOUNCE }));
+  const rippleP = interpolate(frame, [clickFrame, clickFrame + 18], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.out(Easing.cubic),
+  });
+  const btnPressScale =
+    frame >= clickFrame && frame < clickFrame + 12
+      ? interpolate(frame, [clickFrame, clickFrame + 4, clickFrame + 12], [1, 0.93, 1], {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        })
+      : 1;
+  const cursorOpacity = isNaN(click)
+    ? 1
+    : frame >= clickFrame + 8
+    ? interpolate(frame, [clickFrame + 8, clickFrame + 22], [1, 0.36], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp',
+      })
+    : 1;
   const isHovering = frame >= beat3 - 2 && frame < clickFrame + 2;
   const isClicked = frame >= clickFrame + 2 || activeClause >= 3;
 
@@ -1027,22 +1273,23 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           flexDirection: 'row',
           gap: 22,
           opacity: interpolate(focus, [0, 1], [1, 0.25]),
-          filter: `blur(${interpolate(focus, [0, 1], [0, 4.5])}px)`,
-          transform: `scale(${interpolate(focus, [0, 1], [1, 0.96])})`,
+          filter: focus > 0.01 ? `blur(${interpolate(focus, [0, 1], [0, 4.5]).toFixed(2)}px)` : 'none',
+          transform: focus === 0 ? 'none' : `scale(${interpolate(focus, [0, 1], [1, 0.96]).toFixed(4)})`,
         }}
       >
         {backCards.slice(0, 3).map((bc, i) => {
-          const p = spring({ frame: frame - i * 4, fps, config: SPRING_SILKY });
+          const p = settle(spring({ frame: frame - i * 5, fps, config: SPRING_SILKY }));
           return (
             <div
               key={i}
               style={{
                 width: 450,
                 background: TOKENS.card,
-                border: `1px solid ${TOKENS.border}`,
+                border: `1.5px solid ${focus < 0.2 && i === Math.min(2, Math.floor(frame / 10)) ? TOKENS.amberBorder : TOKENS.border}`,
                 borderRadius: 16,
                 padding: '22px 24px',
                 opacity: p,
+                transform: p === 1 ? 'none' : `translate3d(0, ${interpolate(p, [0, 1], [16, 0]).toFixed(2)}px, 0)`,
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -1064,7 +1311,7 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           position: 'absolute',
           top: 150,
           opacity: focus,
-          transform: `translateY(${interpolate(focus, [0, 1], [-90, 0])}px)`,
+          transform: focus === 1 ? 'none' : `translate3d(0, ${interpolate(focus, [0, 1], [-84, 0]).toFixed(2)}px, 0)`,
         }}
       >
         <div
@@ -1094,24 +1341,56 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
               {d.promptText || ''}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'relative', flexShrink: 0 }}>
-              <span
-                style={{
-                  minWidth: 142,
-                  textAlign: 'center',
-                  whiteSpace: 'nowrap',
-                  padding: '9px 22px',
-                  borderRadius: 999,
-                  background: isClicked ? TOKENS.emerald : isHovering ? 'rgba(52, 211, 153, 0.22)' : TOKENS.emeraldSoft,
-                  border: `1.5px solid ${TOKENS.emerald}`,
-                  color: isClicked ? '#111113' : TOKENS.emerald,
-                  fontFamily: TOKENS.fontMono,
-                  fontSize: 19,
-                  fontWeight: 800,
-                  boxShadow: isClicked ? '0 0 20px rgba(52, 211, 153, 0.45)' : 'none',
-                }}
-              >
-                {isClicked ? `✓ ${d.clickedLabel || '已锁定'}` : d.primaryAction || '切换身份'}
-              </span>
+              <div style={{ position: 'relative', display: 'inline-flex' }}>
+                {rippleP > 0 && rippleP < 1 && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      inset: -4,
+                      borderRadius: 999,
+                      border: `2px solid ${TOKENS.emerald}`,
+                      opacity: 1 - rippleP,
+                      transform: `scale(${(1 + rippleP * 0.45).toFixed(3)})`,
+                      pointerEvents: 'none',
+                    }}
+                  />
+                )}
+                <span
+                  style={{
+                    minWidth: 142,
+                    textAlign: 'center',
+                    whiteSpace: 'nowrap',
+                    padding: '9px 22px',
+                    borderRadius: 999,
+                    background: isClicked ? TOKENS.emerald : isHovering ? 'rgba(52, 211, 153, 0.22)' : TOKENS.emeraldSoft,
+                    border: `1.5px solid ${isHovering ? TOKENS.amber : TOKENS.emerald}`,
+                    color: isClicked ? '#111113' : TOKENS.emerald,
+                    fontFamily: TOKENS.fontMono,
+                    fontSize: 19,
+                    fontWeight: 800,
+                    transform: btnPressScale === 1 ? 'none' : `scale(${btnPressScale.toFixed(3)})`,
+                    boxShadow: isClicked ? '0 0 22px rgba(52, 211, 153, 0.45)' : 'none',
+                  }}
+                >
+                  {isClicked ? `✓ ${d.clickedLabel || '已锁定'}` : d.primaryAction || '切换身份'}
+                </span>
+                <svg
+                  width="28"
+                  height="28"
+                  viewBox="0 0 24 24"
+                  style={{
+                    position: 'absolute',
+                    right: interpolate(hoverP, [0, 1], [-26, 6]),
+                    bottom: interpolate(hoverP, [0, 1], [-28, -14]),
+                    opacity: cursorOpacity,
+                    transform: `scale(${btnPressScale === 1 ? 1 : 0.86})`,
+                    pointerEvents: 'none',
+                    zIndex: 4,
+                  }}
+                >
+                  <path d="M4 2L20 11L13 13L16 20L13 21.5L10 14.5L5 19Z" fill="#FFF" stroke="#111" strokeWidth="1.5" />
+                </svg>
+              </div>
               {d.secondaryAction && (
                 <span
                   style={{
@@ -1131,19 +1410,6 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                   {d.secondaryAction}
                 </span>
               )}
-              <svg
-                width="30"
-                height="30"
-                viewBox="0 0 24 24"
-                style={{
-                  position: 'absolute',
-                  left: interpolate(hoverP, [0, 1], [135, 48]),
-                  top: interpolate(hoverP, [0, 1], [52, 24]),
-                  transform: `scale(${isClicked ? interpolate(click, [0, 0.5, 1], [1, 0.82, 1]) : 1})`,
-                }}
-              >
-                <path d="M4 2L20 11L13 13L16 20L13 21.5L10 14.5L5 19Z" fill="#FFF" stroke="#111" strokeWidth="1.5" />
-              </svg>
             </div>
           </div>
         </div>
@@ -1281,28 +1547,34 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
         </div>
         <div style={{ padding: '28px 34px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {lines.map((ln, idx) => {
-            // Map activeClause to a single focused line so unselected lines never stay highlighted
-            const activeLineIdx =
-              lines.length > scene.clauses.length
-                ? Math.min(lines.length - 1, activeClause + 1)
-                : Math.min(lines.length - 1, activeClause);
+            const numClauses = Math.max(1, scene.clauses.length);
+            const lineForClause = (c: number) =>
+              lines.length > numClauses
+                ? Math.min(lines.length - 1, c + 1)
+                : Math.min(lines.length - 1, c);
             const startF =
               idx === 0
                 ? 0
                 : getBeatFrame(
                     scene,
-                    Math.min(scene.clauses.length - 1, Math.max(0, lines.length > scene.clauses.length ? idx - 1 : idx)),
+                    Math.min(numClauses - 1, Math.max(0, lines.length > numClauses ? idx - 1 : idx)),
                     fps,
                     idx / Math.max(1, lines.length)
                   );
-            const p = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
+            const p = settle(spring({ frame: frame - startF, fps, config: SPRING_SILKY }));
             const typeP = interpolate(frame, [startF, startF + 16], [0.12, 1], {
               extrapolateLeft: 'clamp',
               extrapolateRight: 'clamp',
             });
             const charsToShow = frame >= startF ? Math.ceil(ln.text.length * typeP) : 0;
-            const isCurrentActive = idx === activeLineIdx && frame >= startF;
-            const isPast = idx < activeLineIdx && frame >= startF;
+            const focusW = getSmoothClauseValue(scene, frame, fps, (c) => (lineForClause(c) === idx ? 1 : 0));
+            const visW = getSmoothClauseValue(scene, frame, fps, (c) => {
+              const cur = lineForClause(c);
+              if (cur === idx) return 1;
+              if (idx < cur) return 0.66;
+              return 0.24;
+            });
+            const isCurrentActive = focusW > 0.45 && frame >= startF;
             const color = isCurrentActive
               ? ln.kind === 'out'
                 ? TOKENS.emerald
@@ -1312,6 +1584,7 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
               : ln.kind === 'out'
               ? TOKENS.emerald
               : TOKENS.ink;
+            const slideX = p === 1 ? 6 * focusW : interpolate(p, [0, 1], [16, 6 * focusW]);
             return (
               <div
                 key={idx}
@@ -1319,12 +1592,12 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
                   fontFamily: TOKENS.fontMono,
                   fontSize: 25,
                   color,
-                  background: isCurrentActive ? TOKENS.amberSoft : 'transparent',
-                  borderLeft: isCurrentActive ? `3.5px solid ${TOKENS.amber}` : '3.5px solid transparent',
+                  background: focusW > 0.02 ? `rgba(245, 158, 11, ${(0.13 * focusW).toFixed(3)})` : 'transparent',
+                  borderLeft: `3.5px solid rgba(245, 158, 11, ${focusW.toFixed(3)})`,
                   padding: '8px 16px',
                   borderRadius: 8,
-                  opacity: isCurrentActive ? 1 : isPast ? 0.65 : p * 0.25,
-                  transform: p >= 0.995 ? 'none' : `translate3d(${interpolate(p, [0, 1], [16, 0]).toFixed(2)}px, 0, 0)`,
+                  opacity: p * visW,
+                  transform: Math.abs(slideX) < 0.05 ? 'none' : `translate3d(${slideX.toFixed(2)}px, 0, 0)`,
                 }}
               >
                 {ln.text.slice(0, charsToShow)}
@@ -1348,7 +1621,7 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
   );
 };
 
-// 9. ranked_bars — Clause-Synced Horizontal Progress Bars + Kinetic Counter & Spotlight Shimmer
+// 9. ranked_bars — Smart Beat-Aligned Progress Bars + Bidirectional Smooth Spotlight
 const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -1356,8 +1629,8 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const bars: Array<{ label: string; pct: number; valueText: string; tone?: Tone }> = Array.isArray(d.bars)
     ? d.bars
     : [];
-  const activeClause = getActiveClauseIdx(scene, frame, fps);
-  const focusedBarIdx = Math.min(bars.length - 1, Math.max(0, activeClause));
+  const customFocus: FocusTarget[] | undefined = d.clauseFocus;
+  const numClauses = Math.max(1, scene.clauses.length);
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -1376,24 +1649,34 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           </div>
         )}
         {bars.map((b, idx) => {
-          const startF = idx * 8;
-          const p = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
-          const isFocused = idx === focusedBarIdx;
+          const startF = idx * 7;
+          const p = settle(spring({ frame: frame - startF, fps, config: SPRING_SILKY }));
+          const focusW = getSmoothClauseValue(scene, frame, fps, (c) => {
+            const t = resolveFocusedTarget(c, numClauses, bars.length, customFocus);
+            return t === 'all' || t === idx ? 1 : 0;
+          });
+          const visW = getSmoothClauseValue(scene, frame, fps, (c) => {
+            const t = resolveFocusedTarget(c, numClauses, bars.length, customFocus);
+            if (t === 'all' || t === idx) return 1;
+            if (t === 'overview') return 0.88;
+            return 0.66;
+          });
           const pal = tonePalette(b.tone || (idx === 0 ? 'amber' : 'neutral'));
           const widthPct = Math.max(2, Math.min(100, b.pct)) * p;
           const barColor = pal.fg === TOKENS.ink ? '#8E8E98' : pal.fg;
+          const slideX = p === 1 ? 8 * focusW : interpolate(p, [0, 1], [-18, 8 * focusW]);
 
           return (
             <div
               key={idx}
               style={{
-                background: isFocused ? TOKENS.cardElevated : TOKENS.card,
-                border: `1.5px solid ${isFocused ? pal.fg : TOKENS.border}`,
+                background: focusW > 0.35 ? TOKENS.cardElevated : TOKENS.card,
+                border: `1.5px solid ${focusW > 0.45 ? pal.fg : TOKENS.border}`,
                 borderRadius: 16,
                 padding: '18px 24px',
-                opacity: p * (isFocused || activeClause >= bars.length - 1 ? 1 : 0.72),
-                transform: p >= 0.995 ? 'none' : `translate3d(${interpolate(p, [0, 1], [-18, 0]).toFixed(2)}px, 0, 0)`,
-                boxShadow: isFocused ? '0 18px 44px rgba(0,0,0,0.38)' : 'none',
+                opacity: p * visW,
+                transform: Math.abs(slideX) < 0.05 ? 'none' : `translate3d(${slideX.toFixed(2)}px, 0, 0)`,
+                boxShadow: focusW > 0.05 ? `0 18px 44px rgba(0,0,0,${(0.38 * focusW).toFixed(2)})` : 'none',
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -1409,7 +1692,7 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                     height: '100%',
                     background: barColor,
                     borderRadius: 999,
-                    boxShadow: isFocused ? `0 0 16px ${barColor}` : 'none',
+                    boxShadow: focusW > 0.3 ? `0 0 ${Math.round(16 * focusW)}px ${barColor}` : 'none',
                   }}
                 />
               </div>
@@ -1421,16 +1704,20 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   );
 };
 
-// 10. evidence_clip — Warm Paper Document + Clause-Synced Excerpt Spotlight & Progressive Highlighter
+// 10. evidence_clip — Warm Paper Document + Smart Beat-Aligned Smooth Excerpt Highlighter
 const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
   const excerpts: Array<{ text: string; highlight?: boolean }> = Array.isArray(d.excerpts) ? d.excerpts : [];
-  const activeClause = getActiveClauseIdx(scene, frame, fps);
-  const focusedIdx = Math.min(excerpts.length - 1, Math.max(0, activeClause));
+  const customFocus: FocusTarget[] | undefined = d.clauseFocus;
+  const numClauses = Math.max(1, scene.clauses.length);
+  const hasTitleIntroBeat = !customFocus && numClauses === excerpts.length + 1 && excerpts.length >= 2;
 
-  const cardEnter = spring({ frame, fps, config: SPRING_SILKY });
+  const cardEnter = settle(spring({ frame, fps, config: SPRING_SILKY }));
+  const titleFocusW = hasTitleIntroBeat
+    ? getSmoothClauseValue(scene, frame, fps, (c) => (c === 0 ? 1 : 0))
+    : 0;
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -1443,7 +1730,7 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           padding: '38px 48px',
           boxShadow: '0 32px 76px rgba(0,0,0,0.54)',
           opacity: cardEnter,
-          transform: `translateY(${interpolate(cardEnter, [0, 1], [26, -22])}px)`,
+          transform: cardEnter === 1 ? 'translateY(-22px)' : `translateY(${interpolate(cardEnter, [0, 1], [26, -22]).toFixed(2)}px)`,
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(0,0,0,0.12)', paddingBottom: 16, marginBottom: 22 }}>
@@ -1452,21 +1739,42 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           </span>
           <span style={{ fontFamily: TOKENS.fontMono, fontSize: 18, color: '#52525B' }}>{d.docMeta || ''}</span>
         </div>
-        <div style={{ fontSize: 40, fontWeight: 800, color: '#111113', marginBottom: 22, lineHeight: 1.28 }}>
+        <div
+          style={{
+            fontSize: 40,
+            fontWeight: 800,
+            color: '#111113',
+            marginBottom: 22,
+            lineHeight: 1.28,
+            borderLeft: titleFocusW > 0.05 ? `5px solid rgba(217, 119, 6, ${titleFocusW.toFixed(3)})` : 'none',
+            paddingLeft: titleFocusW > 0.05 ? `${Math.round(14 * titleFocusW)}px` : 0,
+          }}
+        >
           {d.docTitle || ''}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {excerpts.map((ex, i) => {
-            const startF = i === 0 ? 4 : getBeatFrame(scene, Math.min(i, scene.clauses.length - 1), fps, i / Math.max(1, excerpts.length));
-            const itemP = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
-            const hiProgress = interpolate(frame, [startF + 2, startF + 20], [0, 1], {
+            const targetClauseIdx = hasTitleIntroBeat ? i + 1 : Math.min(i, numClauses - 1);
+            const startF = targetClauseIdx === 0 ? 4 : getBeatFrame(scene, targetClauseIdx, fps, i / Math.max(1, excerpts.length));
+            const appearP = settle(spring({ frame: frame - i * 5, fps, config: SPRING_SILKY }));
+            const hiSweep = interpolate(frame, [startF, startF + 20], [0, 1], {
               extrapolateLeft: 'clamp',
               extrapolateRight: 'clamp',
               easing: Easing.out(Easing.cubic),
             });
-            // Exclusively highlight ONLY the currently active item (turn off previous item when moving to next!)
-            const isFocused = i === focusedIdx;
-            const isPast = i < focusedIdx;
+
+            const focusW = getSmoothClauseValue(scene, frame, fps, (c) => {
+              const t = resolveFocusedTarget(c, numClauses, excerpts.length, customFocus);
+              return t === i ? 1 : 0;
+            });
+            const visW = getSmoothClauseValue(scene, frame, fps, (c) => {
+              const t = resolveFocusedTarget(c, numClauses, excerpts.length, customFocus);
+              if (t === i) return 1;
+              if (t === 'overview') return 0.72;
+              if (typeof t === 'number' && i < t) return 0.54;
+              return 0.36;
+            });
+            const slideX = 8 * focusW;
 
             return (
               <div
@@ -1474,16 +1782,17 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                 style={{
                   fontSize: 25,
                   lineHeight: 1.55,
-                  color: isFocused ? '#111113' : '#3F3F46',
-                  fontWeight: 600,
-                  background: isFocused
-                    ? `linear-gradient(90deg, rgba(245, 158, 11, 0.34) ${hiProgress * 100}%, rgba(0,0,0,0.03) ${hiProgress * 100}%)`
-                    : 'transparent',
-                  borderLeft: `4px solid ${isFocused ? '#D97706' : 'transparent'}`,
+                  color: focusW > 0.5 ? '#111113' : '#3F3F46',
+                  fontWeight: focusW > 0.5 ? 700 : 500,
+                  background:
+                    focusW > 0.02
+                      ? `linear-gradient(90deg, rgba(245, 158, 11, ${(0.34 * focusW).toFixed(3)}) ${(hiSweep * 100).toFixed(1)}%, rgba(0,0,0,0.02) ${(hiSweep * 100).toFixed(1)}%)`
+                      : 'transparent',
+                  borderLeft: `4px solid rgba(217, 119, 6, ${focusW.toFixed(3)})`,
                   padding: '8px 14px',
                   borderRadius: 8,
-                  opacity: isFocused ? 1 : isPast ? 0.54 : interpolate(itemP, [0, 1], [0.22, 0.42]),
-                  transform: 'none',
+                  opacity: appearP * visW,
+                  transform: slideX < 0.05 ? 'none' : `translate3d(${slideX.toFixed(2)}px, 0, 0)`,
                 }}
               >
                 {ex.text}
@@ -1565,11 +1874,25 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
             const triggerClause = it.stepClause ?? idx;
             const startF = triggerClause === 0 ? 4 : getBeatFrame(scene, triggerClause, fps);
             const isRevealed = frame >= startF - 2;
-            const p = spring({ frame: frame - startF, fps, config: SPRING_SNAPPY });
-            const isCurrentFocus = idx === activeItemIdx && isRevealed;
+            const p = settle(spring({ frame: frame - startF, fps, config: SPRING_SILKY }));
+            const focusW = getSmoothClauseValue(scene, frame, fps, (c) => {
+              let activeIdxAtC = 0;
+              for (let j = 0; j < items.length; j++) {
+                if (c >= (items[j].stepClause ?? j)) activeIdxAtC = j;
+              }
+              return activeIdxAtC === idx ? 1 : 0;
+            });
+            const visW = getSmoothClauseValue(scene, frame, fps, (c) => {
+              let activeIdxAtC = 0;
+              for (let j = 0; j < items.length; j++) {
+                if (c >= (items[j].stepClause ?? j)) activeIdxAtC = j;
+              }
+              if (c < triggerClause) return 0.12;
+              return activeIdxAtC === idx ? 1 : 0.48;
+            });
+            const isCurrentFocus = focusW > 0.45 && isRevealed;
             const pal = tonePalette(it.tone || 'amber');
 
-            // Typewriter progress during the first 18 frames after reveal
             const typeP = interpolate(frame, [startF, startF + 18], [0.15, 1], {
               extrapolateLeft: 'clamp',
               extrapolateRight: 'clamp',
@@ -1589,7 +1912,7 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
                   borderRadius: 14,
                   background: isCurrentFocus ? pal.bg : 'rgba(255,255,255,0.02)',
                   border: `1.5px solid ${isCurrentFocus ? pal.border : 'rgba(255,255,255,0.06)'}`,
-                  opacity: isRevealed ? (isCurrentFocus ? 1 : 0.46) : 0.12,
+                  opacity: isRevealed ? visW : 0.12,
                   transform: 'none',
                 }}
               >
@@ -1633,8 +1956,8 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
                       fontWeight: 800,
                       whiteSpace: 'nowrap',
                       opacity: p,
-                      transform: p >= 0.995 ? 'none' : `translate3d(${interpolate(p, [0, 1], [18, 0]).toFixed(2)}px, 0, 0)`,
-                      boxShadow: isCurrentFocus ? '0 8px 24px rgba(0,0,0,0.35)' : 'none',
+                      transform: p === 1 ? 'none' : `translate3d(${interpolate(p, [0, 1], [18, 0]).toFixed(2)}px, 0, 0)`,
+                      boxShadow: focusW > 0.2 ? `0 8px 24px rgba(0,0,0,${(0.35 * focusW).toFixed(2)})` : 'none',
                     }}
                   >
                     {it.translation}
@@ -2025,16 +2348,17 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                 <span style={{ fontSize: 32, fontWeight: 800, color: TOKENS.ink }}>{col.title}</span>
               </div>
 
-              {/* Bottom-Up Brick-by-Brick Stacked Architecture Blocks (1 Individual Item Lit Per Beat) */}
+              {/* Bottom-Up Brick-by-Brick Stacked Architecture Blocks (1 Individual Item Lit Per Beat + Smooth Focus) */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 'auto' }}>
                 {col.layers.map((ly, lIdx) => {
-                  const activeClause = getActiveClauseIdx(scene, frame, fps);
                   const lyClause = ly.stepClause ?? 0;
                   const lyF = lyClause === 0 ? 4 : getBeatFrame(scene, Math.min(lyClause, scene.clauses.length - 1), fps);
-                  const isShown = frame >= lyF - 1 && activeClause >= lyClause;
-                  const isCurrentBeat = activeClause === lyClause;
-                  const lp = spring({ frame: frame - lyF, fps, config: SPRING_SILKY });
+                  const lp = settle(spring({ frame: frame - lyF, fps, config: SPRING_SILKY }));
+                  const focusW = getSmoothClauseValue(scene, frame, fps, (c) => (c === lyClause ? 1 : 0));
+                  const shownW = getSmoothClauseValue(scene, frame, fps, (c) => (c >= lyClause ? (c === lyClause ? 1 : 0.78) : 0.08));
+                  const isShown = frame >= lyF - 2;
                   const cStyle = layerColorMap[ly.color || 'blue'];
+                  const liftY = isShown ? interpolate(lp, [0, 1], [24, -4 * focusW]) : 22;
 
                   return (
                     <div
@@ -2044,23 +2368,18 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                         padding: '0 18px',
                         borderRadius: 14,
                         background: cStyle.bg,
-                        border: `2.5px solid ${isCurrentBeat ? '#FFFFFF' : cStyle.border}`,
+                        border: `2.5px solid ${focusW > 0.45 ? '#FFFFFF' : cStyle.border}`,
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
                         gap: 4,
-                        opacity: isShown ? (isCurrentBeat ? 1 : 0.76) : 0.08,
-                        transform: isShown
-                          ? lp >= 0.995
-                            ? isCurrentBeat
-                              ? 'translate3d(0, -3px, 0)'
-                              : 'none'
-                            : `translate3d(0, ${interpolate(lp, [0, 1], [24, isCurrentBeat ? -3 : 0]).toFixed(2)}px, 0)`
-                          : 'translate3d(0, 22px, 0)',
-                        boxShadow: isCurrentBeat
-                          ? `0 0 28px ${cStyle.border}, 0 16px 36px rgba(0,0,0,0.45)`
-                          : '0 10px 26px rgba(0,0,0,0.28)',
+                        opacity: isShown ? lp * shownW : 0.08,
+                        transform: Math.abs(liftY) < 0.05 ? 'none' : `translate3d(0, ${liftY.toFixed(2)}px, 0)`,
+                        boxShadow:
+                          focusW > 0.05
+                            ? `0 0 ${Math.round(28 * focusW)}px ${cStyle.border}, 0 16px 36px rgba(0,0,0,0.45)`
+                            : '0 10px 26px rgba(0,0,0,0.28)',
                       }}
                     >
                       <span style={{ fontSize: 25, fontWeight: 900, color: cStyle.text, textAlign: 'center' }}>{ly.label}</span>
@@ -2161,34 +2480,38 @@ const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) =>
               {d.doorFunction || '🚪 processCheckout()'}
             </div>
 
-            {/* 5 Hidden Inner Rooms */}
+            {/* 5 Hidden Inner Rooms with Left-to-Right Staggered Cascade */}
             <div
               style={{
                 display: 'flex',
                 flexDirection: 'row',
                 gap: 18,
-                opacity: p3,
-                transform: `translateY(${interpolate(p3, [0, 1], [16, 0])}px)`,
               }}
             >
-              {rooms.map((rm, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    width: 220,
-                    padding: '22px 16px',
-                    borderRadius: 14,
-                    background: '#23272A',
-                    border: `1.5px solid rgba(52, 211, 153, 0.35)`,
-                    fontSize: 25,
-                    fontWeight: 800,
-                    color: TOKENS.ink,
-                    textAlign: 'center',
-                  }}
-                >
-                  {rm}
-                </div>
-              ))}
+              {rooms.map((rm, idx) => {
+                const rmP = settle(spring({ frame: frame - (step3F + idx * 5), fps, config: SPRING_SILKY }));
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      width: 220,
+                      padding: '22px 16px',
+                      borderRadius: 14,
+                      background: '#23272A',
+                      border: `1.5px solid rgba(52, 211, 153, ${(0.22 + 0.28 * rmP).toFixed(2)})`,
+                      fontSize: 25,
+                      fontWeight: 800,
+                      color: TOKENS.ink,
+                      textAlign: 'center',
+                      opacity: rmP,
+                      transform: rmP === 1 ? 'none' : `translate3d(0, ${interpolate(rmP, [0, 1], [18, 0]).toFixed(2)}px, 0)`,
+                      boxShadow: rmP > 0.6 ? '0 10px 24px rgba(0,0,0,0.32)' : 'none',
+                    }}
+                  >
+                    {rm}
+                  </div>
+                );
+              })}
             </div>
 
             <div style={{ fontSize: 24, fontWeight: 800, color: TOKENS.emerald, opacity: p3 }}>
@@ -2347,7 +2670,7 @@ const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) =>
   );
 };
 
-// 15. split_tree_chat_dispatch — Center-Grow File Tree -> Smooth Shift Left -> Right Agent Chat Dispatch (grok_seq_13_00.jpg)
+// 15. split_tree_chat_dispatch — Universal Center-Grow Directory Tree -> Smooth Shift Left -> Right Dispatch Handoff & Output Preview
 const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -2355,9 +2678,9 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
   const folders: Array<{ name: string; files: string; stepClause?: number; highlight?: boolean }> = Array.isArray(d.folders)
     ? d.folders
     : [
-        { name: 'context', files: 'about.md · brand.md', stepClause: 0 },
-        { name: 'meetings', files: 'spec.md', stepClause: 1, highlight: true },
-        { name: 'projects', files: '官網程式碼', stepClause: 2 },
+        { name: 'context', files: 'spec.md · rules.md', stepClause: 0 },
+        { name: 'inputs', files: 'requirements.md', stepClause: 1, highlight: true },
+        { name: 'outputs', files: 'build_artifact', stepClause: 2 },
       ];
 
   const shiftClause = d.shiftClause ?? Math.min(2, Math.max(1, scene.clauses.length - 2));
@@ -2371,8 +2694,13 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
     extrapolateRight: 'clamp',
   });
   const isTypingStarted = frame >= typeF - 2;
-  const chatPrompt = String(d.chatPrompt || '根據 meetings 裡面討論出來的規格幫我寫官網，品牌規範看 context，做完存到 projects');
+  const sourceLabel = d.sourceNode || d.fromBot || '調度核心';
+  const targetLabel = d.targetNode || d.toBot || '執行單元';
+  const sourceIcon = d.sourceIcon || '★';
+  const targetIcon = d.targetIcon || '</>';
+  const chatPrompt = String(d.dispatchText || d.chatPrompt || '讀取 inputs 規格與 context 規範，完成實作後輸出至 outputs 目錄');
   const shownChars = Math.ceil(chatPrompt.length * typeP);
+  const hasTopBar = Boolean(d.topTitle || d.topPill || (Array.isArray(d.stepper) && d.stepper.length > 0));
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -2384,14 +2712,14 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          transform: `translateY(${d.topTitle || d.topPill ? 24 : -12}px)`,
+          transform: `translateY(${hasTopBar ? 28 : -12}px)`,
         }}
       >
-        {/* Left / Center File Tree Card (Starts centered, shifts left by -350px at shiftClause!) */}
+        {/* Left / Center File Tree Card (Starts centered, shifts left by -370px at shiftClause!) */}
         <div
           style={{
             width: 680,
-            background: '#222226',
+            background: '#222225',
             border: `1.5px solid ${TOKENS.border}`,
             borderRadius: 20,
             padding: '28px 34px',
@@ -2401,7 +2729,7 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 24, fontWeight: 800, color: TOKENS.inkSecondary, marginBottom: 18 }}>
             <span>📁</span>
-            <span>{d.rootLabel || '雲端硬碟 · Shared Drive'}</span>
+            <span>{d.rootLabel || '共用工作區 · Shared Workspace'}</span>
           </div>
 
           <div style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -2422,7 +2750,7 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
                     marginLeft: 26,
                     padding: '12px 18px',
                     borderRadius: 12,
-                    background: isLit ? TOKENS.amberSoft : 'rgba(255,255,255,0.025)',
+                    background: isLit ? TOKENS.amberSoft : 'rgba(255,255,255,0.03)',
                     border: `2px solid ${isLit ? TOKENS.amber : 'transparent'}`,
                     display: 'flex',
                     alignItems: 'center',
@@ -2438,7 +2766,7 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
                     style={{
                       padding: '4px 14px',
                       borderRadius: 999,
-                      background: '#323238',
+                      background: TOKENS.cardElevated,
                       fontFamily: TOKENS.fontMono,
                       fontSize: 18,
                       fontWeight: 700,
@@ -2453,7 +2781,7 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
           </div>
         </div>
 
-        {/* Right Agent Dispatch Topology + Live Typewriter Bubble (Appears when tree shifts left) */}
+        {/* Right Dispatch Topology + Live Specification Bubble */}
         <div
           style={{
             position: 'absolute',
@@ -2467,36 +2795,34 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
             transform: `translateX(${interpolate(shiftP, [0, 1], [48, 0])}px)`,
           }}
         >
-          {/* Bot Dispatch Row */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 28 }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 78, height: 78, borderRadius: '50%', background: '#F5F5F7', color: '#141416', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34, fontWeight: 900, border: `3px solid ${TOKENS.amber}` }}>
-                ★
+              <div style={{ width: 78, height: 78, borderRadius: '50%', background: TOKENS.ink, color: '#141416', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, fontWeight: 900, border: `3px solid ${TOKENS.amber}` }}>
+                {sourceIcon}
               </div>
-              <span style={{ fontSize: 22, fontWeight: 800, color: TOKENS.ink }}>{d.fromBot || '幕僚長'}</span>
+              <span style={{ fontSize: 22, fontWeight: 800, color: TOKENS.ink }}>{sourceLabel}</span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
               <div style={{ fontSize: 32, color: TOKENS.amber, fontWeight: 900 }}>───────→</div>
               <span style={{ padding: '4px 16px', borderRadius: 999, background: '#322F2B', border: `1px solid ${TOKENS.amberBorder}`, fontSize: 18, fontWeight: 800, color: TOKENS.amber }}>
-                {d.dispatchBadge || '一句話派工'}
+                {d.dispatchBadge || '上下文零重複交接'}
               </span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 78, height: 78, borderRadius: '50%', background: TOKENS.emerald, color: '#0D1F17', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: TOKENS.fontMono, fontSize: 28, fontWeight: 900 }}>
-                {'</>'}
+              <div style={{ width: 78, height: 78, borderRadius: '50%', background: TOKENS.emeraldMint, color: '#0B1F1A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: TOKENS.fontMono, fontSize: 26, fontWeight: 900 }}>
+                {targetIcon}
               </div>
-              <span style={{ fontSize: 22, fontWeight: 800, color: TOKENS.emerald }}>{d.toBot || 'Dev bot'}</span>
+              <span style={{ fontSize: 22, fontWeight: 800, color: TOKENS.emeraldMint }}>{targetLabel}</span>
             </div>
           </div>
 
-          {/* Live Chat Bubble */}
           {isTypingStarted && (
             <div
               style={{
                 width: '100%',
-                background: '#2B2B30',
+                background: TOKENS.card,
                 border: `1.5px solid ${TOKENS.amberBorder}`,
                 borderRadius: 18,
                 padding: '24px 28px',
@@ -2517,7 +2843,7 @@ const PrimitiveSplitTreeChatDispatch: React.FC<{ scene: StudioScene }> = ({ scen
   );
 };
 
-// 16. annotated_ui_tour — 3-Zone App UI Tour with Moving Amber Spotlight + ① ② ③ Numbered Badges (grid_v3_grok.jpg)
+// 16. annotated_ui_tour — Universal 3-Zone App UI Tour with Moving Amber Spotlight + ① ② ③ Badges + Optional Countdown Ring
 const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -2531,9 +2857,9 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
   }> = Array.isArray(d.zones)
     ? d.zones
     : [
-        { badge: '1', title: '左側：專職 Bot 清單', subtitle: '釘選幕僚長與群組分區', items: ['★ Chief of Staff 幕僚長', '🎨 Chief of Design 設計主管', '📈 美股情報員', '💻 Dev 工程師'], stepClause: 0 },
-        { badge: '2', title: '中間：自然語言對話區', subtitle: '交代目標或跳出確認小卡', items: ['「幫我規劃 Q4 產品路線圖」', '⚡ 主動彈出推薦任務選項', '✓ 敏感操作前跳出預覽確認卡'], stepClause: 1 },
-        { badge: '3', title: '右側：Details · 資料庫 · 雲端電腦', subtitle: '隨時查看排程與遠端螢幕', items: ['⏰ Routines 定時與 Webhook', '📚 Library 共用專案文件', '🖥️ Computer 24h 雲端電腦畫面'], stepClause: 2 },
+        { badge: '1', title: '左側：模組與清單導覽', subtitle: '分類分組與常用釘選', items: ['★ 核心入口釘選', '📂 專案工作區分組', '⚡ 快速切換通道'], stepClause: 0 },
+        { badge: '2', title: '中間：核心互動主畫布', subtitle: '指令輸入與關鍵確認卡', items: ['即時呈現執行狀態', '主動推薦下一步動作', '敏感變更前跳出預覽卡'], stepClause: 1 },
+        { badge: '3', title: '右側：狀態 · 資源庫 · 監控', subtitle: '展開檢視底層細節', items: ['⏰ 自動化排程與觸發器', '📚 專案知識與檔案庫', '🖥️ 即時運行環境預覽'], stepClause: 2 },
       ];
 
   const activeClause = getActiveClauseIdx(scene, frame, fps);
@@ -2544,14 +2870,19 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
       activeZoneIdx = i;
     }
   }
+  const countdownSec = typeof d.countdownSec === 'number' ? d.countdownSec : 0;
+  const remainSec = countdownSec > 0 ? Math.max(0, Math.ceil(countdownSec - frame / fps)) : 0;
+  const ringRatio = countdownSec > 0 ? Math.max(0, Math.min(1, 1 - frame / (countdownSec * fps))) : 0;
+  const hasTopBar = Boolean(d.topTitle || d.topPill || (Array.isArray(d.stepper) && d.stepper.length > 0));
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div
         style={{
+          position: 'relative',
           width: 1580,
           height: 620,
-          background: '#1B1B1E',
+          background: '#18181A',
           borderRadius: 20,
           border: `1.5px solid ${TOKENS.border}`,
           padding: 20,
@@ -2559,12 +2890,48 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
           gridTemplateColumns: '380px 1fr 440px',
           gap: 18,
           boxShadow: '0 32px 80px rgba(0,0,0,0.6)',
-          transform: `translateY(${d.topTitle || d.topPill ? 24 : -16}px)`,
+          transform: `translateY(${hasTopBar ? 28 : -16}px)`,
         }}
       >
+        {countdownSec > 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              top: -26,
+              right: -26,
+              width: 76,
+              height: 76,
+              borderRadius: '50%',
+              background: '#1E1E22',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 12px 30px rgba(0,0,0,0.55)',
+              zIndex: 10,
+            }}
+          >
+            <svg width={76} height={76} style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
+              <circle cx={38} cy={38} r={32} fill="none" stroke="#38383D" strokeWidth={4.5} />
+              <circle
+                cx={38}
+                cy={38}
+                r={32}
+                fill="none"
+                stroke={TOKENS.amber}
+                strokeWidth={4.5}
+                strokeDasharray={201}
+                strokeDashoffset={201 * (1 - ringRatio)}
+                strokeLinecap="round"
+              />
+            </svg>
+            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 19, fontWeight: 800, color: TOKENS.ink }}>
+              0:{String(remainSec).padStart(2, '0')}
+            </span>
+          </div>
+        )}
+
         {zones.slice(0, 3).map((zn, idx) => {
           const zStartF = (zn.stepClause ?? idx) === 0 ? 2 : getBeatFrame(scene, zn.stepClause ?? idx, fps);
-          const zp = spring({ frame: frame - zStartF, fps, config: SPRING_SNAPPY });
           const isLit = idx === activeZoneIdx;
           const isVisited = frame >= zStartF - 2;
 
@@ -2573,8 +2940,8 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
               key={idx}
               style={{
                 position: 'relative',
-                background: isLit ? '#282623' : '#222226',
-                border: `2.5px solid ${isLit ? TOKENS.amber : isVisited ? 'rgba(245,158,11,0.28)' : TOKENS.border}`,
+                background: isLit ? '#292622' : '#222225',
+                border: `2.5px solid ${isLit ? TOKENS.amber : isVisited ? 'rgba(254,138,0,0.28)' : TOKENS.border}`,
                 borderRadius: 16,
                 padding: '26px 24px',
                 display: 'flex',
@@ -2582,10 +2949,9 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
                 gap: 16,
                 opacity: isLit ? 1 : isVisited ? 0.42 : 0.22,
                 transform: isLit ? 'translate3d(0, -4px, 0)' : 'none',
-                boxShadow: isLit ? '0 0 36px rgba(245, 158, 11, 0.22)' : 'none',
+                boxShadow: isLit ? '0 0 36px rgba(254, 138, 0, 0.22)' : 'none',
               }}
             >
-              {/* Numbered Amber Circle Badge ① ② ③ */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                 <div
                   style={{
@@ -2637,7 +3003,7 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
   );
 };
 
-// 17. org_tree_radiate — 1-to-Many Chief-of-Staff Hierarchy vs Messy Direct Lines OR Collision-Free Radial Mindmap
+// 17. org_tree_radiate — High-Whitespace Frameless 1-to-Many Hub Routing vs Direct-Fanout Fatigue OR Collision-Free Radial Mindmap
 const PrimitiveOrgTreeRadiate: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -2653,7 +3019,6 @@ const PrimitiveOrgTreeRadiate: React.FC<{ scene: StudioScene }> = ({ scene }) =>
     return (
       <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
         <div style={{ position: 'relative', width: 1400, height: 600, transform: 'translateY(22px)' }}>
-          {/* SVG Radial Connecting Lines */}
           <svg width={1400} height={600} style={{ position: 'absolute', inset: 0 }}>
             {spokes.map((_, idx) => {
               const angle = (idx / spokes.length) * Math.PI * 2 - Math.PI / 2;
@@ -2677,7 +3042,6 @@ const PrimitiveOrgTreeRadiate: React.FC<{ scene: StudioScene }> = ({ scene }) =>
             })}
           </svg>
 
-          {/* Surrounding File Nodes (Guaranteed Non-Overlapping Polar Ring!) */}
           {spokes.map((label, idx) => {
             const angle = (idx / spokes.length) * Math.PI * 2 - Math.PI / 2;
             const x = 700 + Math.cos(angle) * 470;
@@ -2693,7 +3057,7 @@ const PrimitiveOrgTreeRadiate: React.FC<{ scene: StudioScene }> = ({ scene }) =>
                   width: 190,
                   height: 64,
                   borderRadius: 12,
-                  background: '#2A2A2E',
+                  background: TOKENS.card,
                   border: `1.5px solid ${TOKENS.border}`,
                   display: 'flex',
                   alignItems: 'center',
@@ -2714,7 +3078,6 @@ const PrimitiveOrgTreeRadiate: React.FC<{ scene: StudioScene }> = ({ scene }) =>
             );
           })}
 
-          {/* Center Core Trigger Node */}
           <div
             style={{
               position: 'absolute',
@@ -2730,96 +3093,104 @@ const PrimitiveOrgTreeRadiate: React.FC<{ scene: StudioScene }> = ({ scene }) =>
               justifyContent: 'center',
               fontSize: 36,
               fontWeight: 900,
-              boxShadow: '0 0 45px rgba(245, 158, 11, 0.5)',
+              boxShadow: '0 0 45px rgba(254, 138, 0, 0.45)',
               transform: `scale(${enterP})`,
             }}
           >
-            {d.centerTitle || '改按鈕顏色'}
+            {d.centerTitle || '改動單一需求'}
           </div>
         </div>
       </AbsoluteFill>
     );
   }
 
-  // Default: "hierarchy_compare" (Left: No Middle Layer Messy vs Right: Chief of Staff Clean Tree)
+  // Frameless High-Whitespace Hierarchy Compare (Left: Direct 1-to-5 Fanout Fatigue vs Right: Clean Hub Layer)
   const rightF = getBeatFrame(scene, d.rightClause ?? 1, fps, 0.45);
   const leftP = spring({ frame, fps, config: SPRING_SNAPPY });
   const rightP = spring({ frame: frame - rightF, fps, config: SPRING_SNAPPY });
   const isRightActive = frame >= rightF - 2;
-  const subBots: string[] = Array.isArray(d.subBots) ? d.subBots : ['晨間信箱秘書', '美股情報員', '全端工程師'];
+  const leafNodes: string[] = Array.isArray(d.leafNodes || d.subBots)
+    ? (d.leafNodes || d.subBots)
+    : ['模組 A', '模組 B', '模組 C'];
+  const hubLabel = d.hubTitle || d.chiefTitle || '統一調度中樞';
+  const topActor = d.topActor || '決策端';
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div style={{ display: 'flex', gap: 56, transform: 'translateY(22px)' }}>
-        {/* Left: No Middle Layer (Management Fatigue) */}
+      <div style={{ display: 'flex', gap: 84, alignItems: 'center', transform: 'translateY(18px)' }}>
+        {/* Left: Frameless Direct Fanout (High Cognitive Overhead) */}
         <div
           style={{
-            width: 640,
-            height: 520,
-            background: '#232225',
-            border: `2px solid ${isRightActive ? TOKENS.border : TOKENS.coral}`,
-            borderRadius: 22,
-            padding: '28px 32px',
+            width: 610,
+            height: 490,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'space-between',
-            opacity: isRightActive ? 0.42 : leftP,
+            opacity: isRightActive ? 0.34 : leftP,
           }}
         >
-          <div style={{ padding: '6px 20px', borderRadius: 999, background: TOKENS.coralSoft, border: `1px solid ${TOKENS.coralBorder}`, color: TOKENS.coral, fontSize: 22, fontWeight: 800 }}>
-            {d.leftBadge || '✗ 沒中間層：每件事都要自己想找誰（管理疲勞）'}
+          <div style={{ padding: '8px 24px', borderRadius: 999, background: TOKENS.card, border: `1.5px solid ${TOKENS.coralBorder}`, color: TOKENS.inkSecondary, fontSize: 22, fontWeight: 800 }}>
+            {d.leftBadge || '缺少中間層：每次都要人工判斷找誰'}
           </div>
-          <div style={{ width: 76, height: 76, borderRadius: '50%', background: '#38383E', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 900 }}>
-            你
+          <div style={{ width: 78, height: 78, borderRadius: '50%', background: TOKENS.card, border: `2px solid ${TOKENS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 900 }}>
+            {topActor}
           </div>
-          <svg width={520} height={130}>
-            {[60, 160, 260, 360, 460].map((x, i) => (
-              <line key={i} x1={260} y1={10} x2={x} y2={120} stroke={TOKENS.coral} strokeWidth={2} strokeDasharray="5 5" />
+          <svg width={520} height={160}>
+            {[55, 155, 260, 365, 465].map((x, i) => (
+              <g key={i}>
+                <line x1={260} y1={8} x2={x} y2={148} stroke="#6E6E74" strokeWidth={2} />
+                <text x={(260 + x) / 2 - 6} y={96} fill={TOKENS.inkMuted} fontSize="18" fontWeight="800">?</text>
+              </g>
             ))}
           </svg>
-          <div style={{ display: 'flex', gap: 22 }}>
-            {['Bot 1', 'Bot 2', 'Bot 3', 'Bot 4', 'Bot 5'].map((b, i) => (
-              <div key={i} style={{ padding: '12px 16px', borderRadius: 12, background: '#2F2F35', fontSize: 20, fontWeight: 700, color: TOKENS.inkSecondary }}>
-                🤖 {b}
+          <div style={{ display: 'flex', gap: 20 }}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <div key={n} style={{ width: 78, height: 64, borderRadius: 16, background: TOKENS.card, border: `1.5px solid ${TOKENS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: TOKENS.fontMono, fontSize: 20, fontWeight: 800, color: TOKENS.inkSecondary }}>
+                #{n}
               </div>
             ))}
           </div>
         </div>
 
-        {/* Right: With Chief of Staff Middle Layer */}
+        {/* Subtle Center Vertical Divider */}
+        <div style={{ width: 1.5, height: 380, background: TOKENS.border }} />
+
+        {/* Right: Clean Single Hub Layer */}
         <div
           style={{
-            width: 680,
-            height: 520,
-            background: '#252827',
-            border: `2.5px solid ${TOKENS.emerald}`,
-            borderRadius: 22,
-            padding: '28px 32px',
+            width: 640,
+            height: 490,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'space-between',
-            opacity: isRightActive ? rightP : 0.15,
+            opacity: isRightActive ? rightP : 0.16,
             transform: `scale(${isRightActive ? interpolate(rightP, [0, 1], [0.95, 1]) : 0.95})`,
-            boxShadow: isRightActive ? '0 24px 64px rgba(0,0,0,0.5)' : 'none',
           }}
         >
-          <div style={{ padding: '6px 22px', borderRadius: 999, background: TOKENS.emeraldSoft, border: `1px solid ${TOKENS.emeraldBorder}`, color: TOKENS.emerald, fontSize: 22, fontWeight: 800 }}>
-            {d.rightBadge || '✓ 有中間層：只對幕僚長下令，自動拆單派工'}
+          <div style={{ padding: '8px 26px', borderRadius: 999, background: TOKENS.amberSoft, border: `1.5px solid ${TOKENS.amber}`, color: TOKENS.amber, fontSize: 22, fontWeight: 800 }}>
+            {d.rightBadge || '設立中間層：單一入口收斂與自動分發'}
           </div>
-          <div style={{ width: 68, height: 68, borderRadius: '50%', background: TOKENS.amber, color: '#141416', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 900 }}>
-            你
+          <div style={{ width: 72, height: 72, borderRadius: '50%', background: TOKENS.card, border: `2px solid ${TOKENS.amber}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 900 }}>
+            {topActor}
           </div>
-          <div style={{ fontSize: 26, color: TOKENS.amber, fontWeight: 900 }}>↓</div>
-          <div style={{ padding: '12px 32px', borderRadius: 999, background: '#F5F5F7', color: '#141416', fontSize: 26, fontWeight: 900, border: `3px solid ${TOKENS.amber}` }}>
-            ★ {d.chiefTitle || '幕僚長 (Chief of Staff)'}
+          <div style={{ width: 2.5, height: 36, background: TOKENS.amber }} />
+          <div style={{ position: 'relative', padding: '14px 36px', borderRadius: 999, background: TOKENS.ink, color: '#141416', fontSize: 26, fontWeight: 900, boxShadow: '0 16px 40px rgba(0,0,0,0.45)' }}>
+            <span style={{ color: TOKENS.amber, marginRight: 8 }}>★</span>
+            {hubLabel}
           </div>
-          <div style={{ fontSize: 24, color: TOKENS.emerald, fontWeight: 900 }}>↙ 　　 ↓ 　　 ↘</div>
-          <div style={{ display: 'flex', gap: 18 }}>
-            {subBots.map((sb, i) => (
-              <div key={i} style={{ padding: '14px 22px', borderRadius: 14, background: '#1A2E26', border: `1.5px solid ${TOKENS.emeraldBorder}`, fontSize: 22, fontWeight: 800, color: TOKENS.ink }}>
-                🤖 {sb}
+          <svg width={480} height={86}>
+            {leafNodes.slice(0, 4).map((_, i, arr) => {
+              const stepX = 400 / Math.max(1, arr.length - 1);
+              const tx = arr.length === 1 ? 240 : 40 + i * stepX;
+              return <line key={i} x1={240} y1={4} x2={tx} y2={80} stroke={TOKENS.emeraldMint} strokeWidth={2.5} />;
+            })}
+          </svg>
+          <div style={{ display: 'flex', gap: 20 }}>
+            {leafNodes.slice(0, 4).map((sb, i) => (
+              <div key={i} style={{ padding: '14px 24px', borderRadius: 16, background: TOKENS.card, border: `1.5px solid ${TOKENS.emeraldBorder}`, fontSize: 22, fontWeight: 800, color: TOKENS.ink }}>
+                {sb}
               </div>
             ))}
           </div>
@@ -3558,6 +3929,904 @@ const PrimitiveMetaphorCanvas: React.FC<{ scene: StudioScene }> = ({ scene }) =>
   );
 };
 
+// 23. before_after_transformer — Universal Bad-Approach Strikethrough -> Emerald Good-Strategy + Live Bottom Outcome Compression
+const PrimitiveBeforeAfterTransformer: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const beat2 = getBeatFrame(scene, d.transformClause ?? 1, fps, 0.36);
+  const beat3 = getBeatFrame(scene, d.compressClause ?? Math.min(2, scene.clauses.length - 1), fps, 0.66);
+
+  const p1 = settle(spring({ frame, fps, config: SPRING_SILKY }));
+  const p2 = settle(spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY }));
+  const p3 = settle(spring({ frame: frame - beat3, fps, config: SPRING_SNAPPY }));
+  const isTransformed = frame >= beat2 - 2;
+  const isCompressed = frame >= beat3 - 2;
+
+  const beforeItems: string[] = Array.isArray(d.beforeItems)
+    ? d.beforeItems
+    : ['原始雜訊紀錄 #01 · 未分類請求', '系統例行通知 #02 · 低優先級', '關鍵商業變更 #03 · 需人工決策', '重複狀態回報 #04 · 自動歸檔', '外部合作提案 #05 · 待回覆確認'];
+  const afterItems: Array<{ text: string; badge?: string }> = Array.isArray(d.afterItems)
+    ? d.afterItems
+    : [
+        { text: '關鍵商業變更 · 已提取風險摘要', badge: '優先決策' },
+        { text: '外部合作提案 · 已生成回覆草案', badge: '一鍵審核' },
+      ];
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ width: 1440, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 26, transform: 'translateY(-14px)', opacity: p1 }}>
+        {d.subjectBadge && (
+          <div style={{ padding: '8px 28px', borderRadius: 999, background: TOKENS.card, border: `1.5px solid ${TOKENS.border}`, fontSize: 25, fontWeight: 800, color: TOKENS.ink }}>
+            {d.subjectBadge}
+          </div>
+        )}
+
+        <div style={{ width: '100%', display: 'grid', gridTemplateColumns: isTransformed ? '440px 1fr' : '1fr', gap: 26, alignItems: 'stretch' }}>
+          <div
+            style={{
+              background: '#2C2C2E',
+              border: `1.5px solid ${isTransformed ? TOKENS.border : TOKENS.coralBorder}`,
+              borderRadius: 18,
+              padding: '22px 28px',
+              opacity: isTransformed ? 0.55 : 1,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              gap: 10,
+            }}
+          >
+            <span style={{ fontSize: 18, fontWeight: 800, color: TOKENS.inkMuted }}>
+              {d.beforeLabel || '反面做法 · 模糊表層操作'}
+            </span>
+            <div style={{ fontSize: 26, fontWeight: 700, color: isTransformed ? TOKENS.inkMuted : TOKENS.ink, textDecoration: isTransformed ? 'line-through' : 'none' }}>
+              {d.beforeText || '只交代機械步驟，缺乏結果標準'}
+            </div>
+          </div>
+
+          {isTransformed && (
+            <div
+              style={{
+                background: TOKENS.emerald,
+                border: `2px solid ${TOKENS.emeraldMint}`,
+                borderRadius: 18,
+                padding: '22px 30px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                gap: 8,
+                opacity: p2,
+                transform: `translateX(${interpolate(p2, [0, 1], [28, 0])}px)`,
+                boxShadow: '0 20px 50px rgba(19, 159, 107, 0.28)',
+              }}
+            >
+              <span style={{ fontSize: 18, fontWeight: 900, color: '#071E15' }}>
+                ✓ {d.afterLabel || '正面解法 · 明確目標與驗收結果'}
+              </span>
+              <div style={{ fontSize: 26, fontWeight: 800, color: TOKENS.ink, lineHeight: 1.4 }}>
+                {d.afterText || '鎖定最終交付指標，過濾低價值雜訊並直接產出可執行結果'}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div
+          style={{
+            width: '100%',
+            background: TOKENS.card,
+            border: `1.5px solid ${isCompressed ? TOKENS.emeraldBorder : TOKENS.border}`,
+            borderRadius: 20,
+            padding: '24px 32px',
+            boxShadow: '0 24px 60px rgba(0,0,0,0.42)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <span style={{ fontSize: 24, fontWeight: 800, color: TOKENS.ink }}>
+              {d.outcomeTitle || '輸出結果對比'}
+            </span>
+            <span
+              style={{
+                fontFamily: TOKENS.fontMono,
+                fontSize: 24,
+                fontWeight: 900,
+                color: isCompressed ? TOKENS.emeraldMint : TOKENS.inkSecondary,
+              }}
+            >
+              {isCompressed ? d.afterMetric || '2 項高價值結論' : d.beforeMetric || '128 項未過濾雜訊'}
+            </span>
+          </div>
+
+          {!isCompressed ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {beforeItems.slice(0, 5).map((it, idx) => (
+                <div key={idx} style={{ fontSize: 21, fontWeight: 600, color: TOKENS.inkSecondary, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span style={{ color: TOKENS.inkMuted }}>•</span>
+                  <span>{it}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, opacity: p3, transform: `translateY(${interpolate(p3, [0, 1], [12, 0])}px)` }}>
+              {afterItems.map((it, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '14px 20px',
+                    borderRadius: 12,
+                    background: 'rgba(19, 159, 107, 0.12)',
+                    border: `1px solid ${TOKENS.emeraldBorder}`,
+                  }}
+                >
+                  <span style={{ fontSize: 23, fontWeight: 800, color: TOKENS.ink }}>{it.text}</span>
+                  {it.badge && (
+                    <span style={{ padding: '5px 16px', borderRadius: 999, background: TOKENS.emerald, color: TOKENS.ink, fontSize: 18, fontWeight: 800 }}>
+                      {it.badge}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 24. synergy_puzzle_pair — Universal Interlocking Two-Piece Jigsaw Synergy Lock
+const PrimitiveSynergyPuzzlePair: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const rightEnterF = getBeatFrame(scene, 1, fps, 0.32);
+  const snapF = getBeatFrame(scene, d.snapClause ?? Math.min(2, scene.clauses.length - 1), fps, 0.65);
+
+  const leftP = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
+  const rightP = settle(spring({ frame: frame - rightEnterF, fps, config: SPRING_SNAPPY }));
+  const snapP = settle(spring({ frame: frame - snapF, fps, config: SPRING_PUZZLE }));
+  const halfGap = interpolate(snapP, [0, 1], [68, 0]);
+  const isSnapped = snapP > 0.85;
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 30, transform: 'translateY(-12px)' }}>
+        <div style={{ position: 'relative', width: 1180, height: 390, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div
+            style={{
+              position: 'relative',
+              width: 560,
+              height: 360,
+              opacity: leftP,
+              transform: `translateX(${-halfGap}px)`,
+              zIndex: 2,
+            }}
+          >
+            <svg width={610} height={360} viewBox="0 0 610 360" style={{ position: 'absolute', left: 0, top: 0 }}>
+              <path
+                d="M 22 4 H 538 Q 556 4 556 22 V 142 A 38 38 0 1 1 556 218 V 338 Q 556 356 538 356 H 22 Q 4 356 4 338 V 22 Q 4 4 22 4 Z"
+                fill="#443019"
+                stroke={TOKENS.amber}
+                strokeWidth="3"
+              />
+            </svg>
+            <div style={{ position: 'relative', width: 540, height: '100%', padding: '38px 42px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, textAlign: 'center' }}>
+              <div style={{ fontFamily: TOKENS.fontMono, fontSize: 22, fontWeight: 800, color: TOKENS.amber }}>
+                {d.leftTag || 'MODULE A · DISPATCH'}
+              </div>
+              <div style={{ fontSize: 40, fontWeight: 900, color: TOKENS.ink }}>{d.leftTitle || '輕量觸達與調度層'}</div>
+              {d.leftSub && <div style={{ fontSize: 22, fontWeight: 600, color: TOKENS.inkSecondary }}>{d.leftSub}</div>}
+            </div>
+          </div>
+
+          <div
+            style={{
+              position: 'relative',
+              width: 560,
+              height: 360,
+              opacity: frame >= rightEnterF - 2 ? rightP : 0.15,
+              transform: `translateX(${halfGap}px)`,
+              zIndex: 1,
+            }}
+          >
+            <svg width={560} height={360} viewBox="0 0 560 360" style={{ position: 'absolute', left: 0, top: 0 }}>
+              <path
+                d="M 4 4 H 538 Q 556 4 556 22 V 338 Q 556 356 538 356 H 4 V 218 A 38 38 0 1 0 4 142 Z"
+                fill={TOKENS.slateFill}
+                stroke={TOKENS.slateLight}
+                strokeWidth="3"
+              />
+            </svg>
+            <div style={{ position: 'relative', width: 560, height: '100%', padding: '38px 42px 38px 66px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, textAlign: 'center' }}>
+              <div style={{ fontFamily: TOKENS.fontMono, fontSize: 22, fontWeight: 800, color: TOKENS.slateLight }}>
+                {d.rightTag || 'MODULE B · ENGINE'}
+              </div>
+              <div style={{ fontSize: 40, fontWeight: 900, color: TOKENS.ink }}>{d.rightTitle || '重度運算與執行層'}</div>
+              {d.rightSub && <div style={{ fontSize: 22, fontWeight: 600, color: TOKENS.inkSecondary }}>{d.rightSub}</div>}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 160, alignItems: 'center' }}>
+          <div style={{ padding: '12px 32px', borderRadius: 999, background: '#2E261D', border: `2px solid ${TOKENS.amber}`, fontSize: 24, fontWeight: 800, color: TOKENS.ink }}>
+            {d.leftPill || '隨時隨地低門檻觸發'}
+          </div>
+          <div style={{ padding: '12px 32px', borderRadius: 999, background: TOKENS.card, border: `2px solid ${isSnapped ? TOKENS.emeraldMint : TOKENS.border}`, fontSize: 24, fontWeight: 800, color: isSnapped ? TOKENS.emeraldMint : TOKENS.ink }}>
+            {d.rightPill || '專業穩定深度執行'}
+          </div>
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 25. multi_perspective_ring — Left Stream Spotlight (with Non-Focus Noise Blur) + Right Circular Multi-Node Consensus Ring
+const PrimitiveMultiPerspectiveRing: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
+  const enterP = settle(spring({ frame, fps, config: SPRING_SILKY }));
+
+  const nodes: Array<{ label: string; icon?: string; color?: string }> = Array.isArray(d.nodes)
+    ? d.nodes
+    : [
+        { label: '核心統籌', icon: '★', color: TOKENS.amber },
+        { label: '產品規劃', icon: 'P', color: '#FF6911' },
+        { label: '工程架構', icon: '</>', color: TOKENS.emeraldMint },
+        { label: '體驗設計', icon: '✦', color: TOKENS.violet },
+      ];
+  const messages: Array<{ speaker: string; text: string; stepClause?: number }> = Array.isArray(d.messages)
+    ? d.messages
+    : [
+        { speaker: '產品規劃', text: '優先穩定核心漏斗，再擴充次要功能模組', stepClause: 0 },
+        { speaker: '工程架構', text: '先修補計費邊界條件並完成資料庫索引遷移', stepClause: 1 },
+        { speaker: '核心統籌', text: '綜合各方盲點，收斂為兩項關鍵決策拍板執行', stepClause: 2 },
+      ];
+
+  let activeMsgIdx = 0;
+  for (let i = 0; i < messages.length; i++) {
+    if (activeClause >= (messages[i].stepClause ?? i)) activeMsgIdx = i;
+  }
+  const activeSpeaker = messages[activeMsgIdx]?.speaker || nodes[0]?.label;
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div
+        style={{
+          width: 1560,
+          height: 600,
+          background: '#161618',
+          borderRadius: 22,
+          border: `1.5px solid ${TOKENS.border}`,
+          padding: '32px 40px',
+          display: 'grid',
+          gridTemplateColumns: '1.35fr 1fr',
+          gap: 36,
+          alignItems: 'center',
+          boxShadow: '0 32px 80px rgba(0,0,0,0.58)',
+          opacity: enterP,
+          transform: 'translateY(-14px)',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {messages.map((m, idx) => {
+            const mF = (m.stepClause ?? idx) === 0 ? 2 : getBeatFrame(scene, m.stepClause ?? idx, fps);
+            const mp = settle(spring({ frame: frame - mF, fps, config: SPRING_SNAPPY }));
+            const isFocused = idx === activeMsgIdx;
+            const isShown = frame >= mF - 2;
+            return (
+              <div
+                key={idx}
+                style={{
+                  padding: '20px 24px',
+                  borderRadius: 16,
+                  background: isFocused ? '#252529' : '#1D1D20',
+                  border: `1.5px solid ${isFocused ? TOKENS.amber : TOKENS.border}`,
+                  opacity: isShown ? (isFocused ? mp : 0.42) : 0.08,
+                  filter: isShown && !isFocused ? 'blur(2.2px)' : 'none',
+                  transform: `translateY(${interpolate(mp, [0, 1], [14, 0])}px)`,
+                }}
+              >
+                <div style={{ fontSize: 18, fontWeight: 800, color: isFocused ? TOKENS.amber : TOKENS.inkSecondary, marginBottom: 6 }}>
+                  {m.speaker}
+                </div>
+                <div style={{ fontSize: 23, fontWeight: 700, color: TOKENS.ink, lineHeight: 1.44 }}>{m.text}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ position: 'relative', width: 520, height: 480, justifySelf: 'center' }}>
+          <svg width={520} height={480} style={{ position: 'absolute', inset: 0 }}>
+            <circle cx={260} cy={240} r={155} fill="none" stroke="#4D4D52" strokeWidth={2} strokeDasharray="7 7" />
+          </svg>
+          {nodes.slice(0, 5).map((nd, idx, arr) => {
+            const angle = (idx / arr.length) * Math.PI * 2 - Math.PI / 2;
+            const cx = 260 + Math.cos(angle) * 155;
+            const cy = 240 + Math.sin(angle) * 155;
+            const isSpeaking = nd.label === activeSpeaker || idx === activeMsgIdx % arr.length;
+            const col = nd.color || TOKENS.amber;
+            return (
+              <div
+                key={idx}
+                style={{
+                  position: 'absolute',
+                  left: cx - 64,
+                  top: cy - 58,
+                  width: 128,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 10,
+                  transform: `scale(${isSpeaking ? 1.1 : 0.96})`,
+                }}
+              >
+                <div
+                  style={{
+                    width: 78,
+                    height: 78,
+                    borderRadius: '50%',
+                    background: isSpeaking ? col : TOKENS.card,
+                    color: isSpeaking ? '#141416' : TOKENS.ink,
+                    border: `3px solid ${col}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontFamily: TOKENS.fontMono,
+                    fontSize: 26,
+                    fontWeight: 900,
+                    boxShadow: isSpeaking ? `0 0 32px ${col}` : 'none',
+                  }}
+                >
+                  {nd.icon || idx + 1}
+                </div>
+                <span style={{ padding: '4px 14px', borderRadius: 999, background: TOKENS.card, fontSize: 18, fontWeight: 800, color: TOKENS.ink, whiteSpace: 'nowrap' }}>
+                  {nd.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 26. convergent_hub_bus — Universal N-to-1 Independent Surfaces Converging into Shared Substrate / Bus
+const PrimitiveConvergentHubBus: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const baseF = getBeatFrame(scene, d.convergeClause ?? 1, fps, 0.44);
+  const topP = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
+  const baseP = settle(spring({ frame: frame - baseF, fps, config: SPRING_SILKY }));
+
+  const topNodes: Array<{ title: string; sub?: string; color?: string }> = Array.isArray(d.topNodes)
+    ? d.topNodes
+    : [
+        { title: '獨立視圖 A', sub: '專屬上下文', color: TOKENS.violet },
+        { title: '獨立視圖 B', sub: '專屬工作流', color: TOKENS.emeraldMint },
+        { title: '獨立視圖 C', sub: '專屬規則集', color: '#FF6911' },
+      ];
+  const syncPills: string[] = Array.isArray(d.syncPills) ? d.syncPills : ['狀態即時共享', '單次授權全通'];
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ width: 1380, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, transform: 'translateY(-14px)' }}>
+        <div style={{ display: 'flex', gap: 56, justifyContent: 'center', opacity: topP }}>
+          {topNodes.slice(0, 4).map((nd, idx) => (
+            <div
+              key={idx}
+              style={{
+                width: 280,
+                padding: '22px 24px',
+                borderRadius: 18,
+                background: TOKENS.card,
+                border: `2px solid ${nd.color || TOKENS.border}`,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 8,
+                boxShadow: '0 16px 38px rgba(0,0,0,0.38)',
+              }}
+            >
+              <div style={{ fontSize: 26, fontWeight: 900, color: TOKENS.ink }}>{nd.title}</div>
+              {nd.sub && <div style={{ fontSize: 18, fontWeight: 600, color: TOKENS.inkSecondary }}>{nd.sub}</div>}
+            </div>
+          ))}
+        </div>
+
+        <svg width={1040} height={120} viewBox="0 0 1040 120" style={{ opacity: baseP }}>
+          {topNodes.slice(0, 4).map((nd, idx, arr) => {
+            const span = (arr.length - 1) * 336;
+            const startX = 520 - span / 2 + idx * 336;
+            return (
+              <path
+                key={idx}
+                d={`M ${startX} 4 C ${startX} 68, 520 52, 520 116`}
+                fill="none"
+                stroke={nd.color || TOKENS.amber}
+                strokeWidth="3"
+              />
+            );
+          })}
+        </svg>
+
+        <div
+          style={{
+            width: 960,
+            padding: '30px 40px',
+            borderRadius: 22,
+            background: '#252B28',
+            border: `2.5px solid ${TOKENS.emeraldMint}`,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 16,
+            opacity: baseP,
+            transform: `scale(${interpolate(baseP, [0, 1], [0.95, 1])})`,
+            boxShadow: '0 26px 64px rgba(0,0,0,0.5)',
+          }}
+        >
+          <div style={{ fontSize: 34, fontWeight: 900, color: TOKENS.ink }}>
+            {d.baseTitle || '底層共用單一底座與資料總線'}
+          </div>
+          {d.baseSub && <div style={{ fontSize: 22, fontWeight: 600, color: TOKENS.inkSecondary }}>{d.baseSub}</div>}
+          <div style={{ display: 'flex', gap: 18 }}>
+            {syncPills.map((pl, idx) => (
+              <span key={idx} style={{ padding: '7px 22px', borderRadius: 999, background: TOKENS.emeraldSoft, border: `1.5px solid ${TOKENS.emeraldMint}`, color: TOKENS.emeraldMint, fontSize: 20, fontWeight: 800 }}>
+                ✓ {pl}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 27. arc_gauge_audit — Dual Semicircular Contrast Gauges OR High-Speed Needle + Document Skeleton Emerald Scan
+const PrimitiveArcGaugeAudit: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const mode = d.mode || 'dual_compare';
+  const beat2 = getBeatFrame(scene, 1, fps, 0.44);
+  const p1 = settle(spring({ frame, fps, config: SPRING_SILKY }));
+  const p2 = settle(spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY }));
+
+  if (mode === 'speed_scan') {
+    const scanStarted = frame >= beat2 - 2;
+    return (
+      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 90, transform: 'translateY(-10px)' }}>
+          <div style={{ position: 'relative', width: 420, height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width={420} height={380} viewBox="0 0 420 380">
+              <path d="M 70 300 A 165 165 0 1 1 350 300" fill="none" stroke="#3B3B3F" strokeWidth="22" strokeLinecap="round" />
+              <path
+                d="M 70 300 A 165 165 0 1 1 350 300"
+                fill="none"
+                stroke={scanStarted ? TOKENS.emeraldMint : TOKENS.amber}
+                strokeWidth="22"
+                strokeLinecap="round"
+                strokeDasharray={740}
+                strokeDashoffset={740 * (1 - 0.92 * p1)}
+              />
+            </svg>
+            <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 48, fontWeight: 900, color: scanStarted ? TOKENS.emeraldMint : TOKENS.amber }}>
+                {d.gaugeValue || '⚡ 極速'}
+              </span>
+              <span style={{ fontSize: 22, fontWeight: 700, color: TOKENS.inkSecondary }}>{d.gaugeLabel || '毫秒級響應'}</span>
+            </div>
+          </div>
+
+          <div style={{ width: 620, background: TOKENS.card, border: `1.5px solid ${scanStarted ? TOKENS.emeraldBorder : TOKENS.border}`, borderRadius: 20, padding: '32px 36px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <div style={{ width: '46%', height: 20, borderRadius: 999, background: '#B8B8BE', marginBottom: 6 }} />
+            {[88, 78, 84, 70, 86, 76, 82].map((wPct, idx) => {
+              const checkF = beat2 + idx * 3;
+              const checked = frame >= checkF;
+              return (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
+                  <div style={{ width: `${wPct}%`, height: 14, borderRadius: 999, background: checked ? '#9CA3AF' : '#68686E' }} />
+                  <span style={{ width: 26, height: 26, borderRadius: '50%', background: checked ? TOKENS.emeraldMint : '#3F3F45', color: '#081D16', fontSize: 16, fontWeight: 900, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {checked ? '✓' : ''}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </AbsoluteFill>
+    );
+  }
+
+  const leftPct = Math.max(5, Math.min(100, Number(d.leftPct ?? 86))) / 100;
+  const rightPct = Math.max(5, Math.min(100, Number(d.rightPct ?? 18))) / 100;
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 110, alignItems: 'center', transform: 'translateY(-10px)' }}>
+        {[
+          { title: d.leftTitle || '讀取與檢索', tag: d.leftTag || '寬鬆開放', pct: leftPct * p1, col: TOKENS.emeraldMint, icon: d.leftIcon || '👁️' },
+          { title: d.rightTitle || '寫入與變更', tag: d.rightTag || '嚴格收緊', pct: rightPct * p2, col: TOKENS.coral, icon: d.rightIcon || '🔒' },
+        ].map((g, idx) => (
+          <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, opacity: idx === 0 ? p1 : Math.max(0.25, p2) }}>
+            <div style={{ position: 'relative', width: 380, height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width={380} height={280} viewBox="0 0 380 280">
+                <path d="M 55 240 A 145 145 0 1 1 325 240" fill="none" stroke="#3A3A3E" strokeWidth="20" strokeLinecap="round" />
+                <path
+                  d="M 55 240 A 145 145 0 1 1 325 240"
+                  fill="none"
+                  stroke={g.col}
+                  strokeWidth="20"
+                  strokeLinecap="round"
+                  strokeDasharray={640}
+                  strokeDashoffset={640 * (1 - g.pct)}
+                />
+              </svg>
+              <div style={{ position: 'absolute', top: 115, fontSize: 52 }}>{g.icon}</div>
+            </div>
+            <div style={{ fontSize: 38, fontWeight: 900, color: TOKENS.ink }}>{g.title}</div>
+            <div style={{ padding: '8px 26px', borderRadius: 999, background: TOKENS.card, border: `1.5px solid ${g.col}`, color: g.col, fontSize: 22, fontWeight: 800 }}>
+              {g.tag}
+            </div>
+          </div>
+        ))}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 28. idle_waste_vs_event_wake — Periodic Idle Polling Waste Slots vs Dormant Zero-Cost Instant Event Wake
+const PrimitiveIdleWasteVsEventWake: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const wakeF = getBeatFrame(scene, d.wakeClause ?? 1, fps, 0.46);
+  const p1 = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
+  const p2 = settle(spring({ frame: frame - wakeF, fps, config: SPRING_SNAPPY }));
+  const showWake = frame >= wakeF - 2;
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ width: 1420, display: 'flex', flexDirection: 'column', gap: 28, transform: 'translateY(-14px)' }}>
+        <div style={{ background: TOKENS.card, border: `1.5px solid ${showWake ? TOKENS.border : TOKENS.coral}`, borderRadius: 20, padding: '26px 34px', opacity: showWake ? 0.46 : p1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+            <span style={{ fontSize: 28, fontWeight: 900, color: TOKENS.coral }}>
+              ✗ {d.wasteTitle || '固定週期輪詢：絕大多數時間在空轉消耗配額'}
+            </span>
+            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 20, fontWeight: 800, color: TOKENS.inkSecondary }}>
+              {d.wasteInterval || 'Every 10 mins'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 14 }}>
+            {[0, 1, 2, 3, 4, 5, 6].map((idx) => (
+              <div
+                key={idx}
+                style={{
+                  flex: 1,
+                  height: 68,
+                  borderRadius: 12,
+                  background: idx === 5 ? TOKENS.emeraldSoft : TOKENS.coralSoft,
+                  border: `1.5px solid ${idx === 5 ? TOKENS.emeraldMint : TOKENS.coralBorder}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 22,
+                  fontWeight: 800,
+                  color: idx === 5 ? TOKENS.emeraldMint : TOKENS.coral,
+                }}
+              >
+                {idx === 5 ? '有效' : '空轉'}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div
+          style={{
+            background: '#242927',
+            border: `2px solid ${TOKENS.amber}`,
+            borderRadius: 20,
+            padding: '28px 36px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            opacity: showWake ? p2 : 0.16,
+            transform: `translateY(${showWake ? interpolate(p2, [0, 1], [20, 0]) : 20}px)`,
+            boxShadow: showWake ? '0 24px 60px rgba(0,0,0,0.48)' : 'none',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
+            <div style={{ padding: '14px 26px', borderRadius: 14, background: '#1D1D20', border: `1.5px solid ${TOKENS.border}`, fontSize: 24, fontWeight: 800, color: TOKENS.inkSecondary }}>
+              💤 {d.sleepLabel || '平時完全休眠 (0 消耗)'}
+            </div>
+            <span style={{ fontSize: 32, color: TOKENS.amber, fontWeight: 900 }}>──→</span>
+            <div style={{ padding: '14px 28px', borderRadius: 14, background: TOKENS.amber, color: '#141416', fontSize: 25, fontWeight: 900, boxShadow: '0 0 28px rgba(254,138,0,0.45)' }}>
+              🔔 {d.triggerLabel || '外部事件 / Webhook 觸發'}
+            </div>
+            <span style={{ fontSize: 32, color: TOKENS.emeraldMint, fontWeight: 900 }}>──→</span>
+            <div style={{ padding: '14px 28px', borderRadius: 14, background: TOKENS.emerald, color: TOKENS.ink, fontSize: 25, fontWeight: 900 }}>
+              ⚡ {d.wakeLabel || '1 秒喚醒精準執行'}
+            </div>
+          </div>
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 29. binary_decision_tree — Universal Orthogonal Yes/No Decision Tree + Cost/Tradeoff Bar
+const PrimitiveBinaryDecisionTree: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const rightF = getBeatFrame(scene, d.rightClause ?? 1, fps, 0.45);
+  const leftP = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
+  const rightP = settle(spring({ frame: frame - rightF, fps, config: SPRING_SNAPPY }));
+  const showRight = frame >= rightF - 2;
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ width: 1420, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, transform: 'translateY(-14px)' }}>
+        <div style={{ padding: '16px 46px', borderRadius: 999, background: TOKENS.cardElevated, border: `2px solid ${TOKENS.amber}`, fontSize: 30, fontWeight: 900, color: TOKENS.ink, opacity: leftP }}>
+          {d.question || '執行路徑與目標已經確定了嗎？'}
+        </div>
+
+        <svg width={960} height={92} viewBox="0 0 960 92">
+          <path d="M 480 0 V 42 H 190 V 90" fill="none" stroke={TOKENS.emeraldMint} strokeWidth="3" />
+          <path d="M 480 42 H 770 V 90" fill="none" stroke={showRight ? TOKENS.amber : '#4A4A4E'} strokeWidth="3" />
+        </svg>
+
+        <div style={{ width: 1260, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 64 }}>
+          <div style={{ background: TOKENS.card, border: `2px solid ${TOKENS.emeraldMint}`, borderRadius: 20, padding: '28px 34px', display: 'flex', flexDirection: 'column', gap: 12, opacity: leftP }}>
+            <span style={{ alignSelf: 'flex-start', padding: '4px 16px', borderRadius: 999, background: TOKENS.emeraldSoft, color: TOKENS.emeraldMint, fontSize: 19, fontWeight: 800 }}>
+              ✓ {d.leftBranchLabel || '已確定 · 追求效率'}
+            </span>
+            <div style={{ fontSize: 32, fontWeight: 900, color: TOKENS.ink }}>{d.leftTitle || '單一專職通道直接執行'}</div>
+            <div style={{ fontSize: 22, fontWeight: 600, color: TOKENS.inkSecondary }}>{d.leftDetail || '路徑最短、延遲最低、資源消耗最省'}</div>
+          </div>
+
+          <div style={{ background: TOKENS.card, border: `2px solid ${showRight ? TOKENS.amber : TOKENS.border}`, borderRadius: 20, padding: '28px 34px', display: 'flex', flexDirection: 'column', gap: 12, opacity: showRight ? rightP : 0.2 }}>
+            <span style={{ alignSelf: 'flex-start', padding: '4px 16px', borderRadius: 999, background: TOKENS.amberSoft, color: TOKENS.amber, fontSize: 19, fontWeight: 800 }}>
+              ⚡ {d.rightBranchLabel || '不確定 · 需要抓盲點'}
+            </span>
+            <div style={{ fontSize: 32, fontWeight: 900, color: TOKENS.ink }}>{d.rightTitle || '多視角交叉評估決策'}</div>
+            <div style={{ fontSize: 22, fontWeight: 600, color: TOKENS.inkSecondary }}>{d.rightDetail || '暴露跨領域盲點，但算力與時間成本較高'}</div>
+          </div>
+        </div>
+
+        {d.footerWarning && showRight && (
+          <div style={{ marginTop: 26, padding: '10px 30px', borderRadius: 999, background: TOKENS.coralSoft, border: `1.5px solid ${TOKENS.coralBorder}`, color: TOKENS.coral, fontSize: 21, fontWeight: 800, opacity: rightP }}>
+            {d.footerWarning}
+          </div>
+        )}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 30. spotlight_window_tour — Framed Media Window + Non-Focus Noise Blur Masks + #FE8A00 Spotlight Box & Smooth Camera Zoom
+const PrimitiveSpotlightWindowTour: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const zoomF = getBeatFrame(scene, d.focusClause ?? 1, fps, 0.35);
+  const enterP = settle(spring({ frame, fps, config: SPRING_SILKY }));
+  const focusP = settle(spring({ frame: frame - zoomF, fps, config: SPRING_SILKY }));
+
+  const focusBox: { xPct: number; yPct: number; wPct: number; hPct: number } = d.focusBox || {
+    xPct: 28,
+    yPct: 34,
+    wPct: 44,
+    hPct: 22,
+  };
+  const blurZones: Array<{ xPct: number; yPct: number; wPct: number; hPct: number }> = Array.isArray(d.blurZones)
+    ? d.blurZones
+    : [];
+  const targetScale = Number(d.zoomScale ?? 1.12);
+  const curScale = interpolate(focusP, [0, 1], [1, targetScale]);
+  const pills: string[] = Array.isArray(d.pills) ? d.pills : [];
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 22, opacity: enterP, transform: 'translateY(-16px)' }}>
+        <div
+          style={{
+            width: 1280,
+            height: 640,
+            borderRadius: 18,
+            overflow: 'hidden',
+            background: '#121214',
+            border: `1.5px solid ${TOKENS.border}`,
+            boxShadow: '0 32px 80px rgba(0,0,0,0.62)',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <div style={{ height: 42, padding: '0 18px', background: '#222327', borderBottom: `1px solid ${TOKENS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#52525B' }} />
+              <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#52525B' }} />
+              <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#52525B' }} />
+            </div>
+            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 17, fontWeight: 700, color: TOKENS.inkSecondary }}>
+              {d.windowTitle || 'app.example.com'}
+            </span>
+            <span style={{ width: 36 }} />
+          </div>
+
+          <div style={{ position: 'relative', flex: 1, overflow: 'hidden', transform: `scale(${curScale.toFixed(4)})` }}>
+            {d.videoFile ? (
+              <OffthreadVideo src={staticFile(d.videoFile)} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : d.imageFile ? (
+              <Img src={staticFile(d.imageFile)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: '#0E0E10' }}>
+                <div style={{ fontSize: 54, fontWeight: 900, color: TOKENS.ink }}>{d.heroText || 'Core Feature Spotlight'}</div>
+                {d.subText && <div style={{ fontSize: 22, color: TOKENS.inkSecondary }}>{d.subText}</div>}
+              </div>
+            )}
+
+            {blurZones.map((bz, idx) => (
+              <div
+                key={idx}
+                style={{
+                  position: 'absolute',
+                  left: `${bz.xPct}%`,
+                  top: `${bz.yPct}%`,
+                  width: `${bz.wPct}%`,
+                  height: `${bz.hPct}%`,
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  background: 'rgba(16, 16, 18, 0.56)',
+                  borderRadius: 8,
+                }}
+              />
+            ))}
+
+            <div
+              style={{
+                position: 'absolute',
+                left: `${focusBox.xPct}%`,
+                top: `${focusBox.yPct}%`,
+                width: `${focusBox.wPct}%`,
+                height: `${focusBox.hPct}%`,
+                border: `2.5px solid ${TOKENS.amber}`,
+                borderRadius: 14,
+                boxShadow: '0 0 32px rgba(254, 138, 0, 0.35)',
+                opacity: focusP,
+                pointerEvents: 'none',
+              }}
+            />
+          </div>
+        </div>
+
+        {pills.length > 0 && (
+          <div style={{ display: 'flex', gap: 28 }}>
+            {pills.map((pl, idx) => (
+              <div
+                key={idx}
+                style={{
+                  padding: '12px 32px',
+                  borderRadius: 999,
+                  background: idx === pills.length - 1 ? '#2E261C' : TOKENS.card,
+                  border: `1.5px solid ${idx === pills.length - 1 ? TOKENS.amber : TOKENS.border}`,
+                  fontSize: 24,
+                  fontWeight: 800,
+                  color: TOKENS.ink,
+                }}
+              >
+                {pl}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 31. vignette_metaphor_stage — Radial-Feathered Visual Metaphor Centerpiece + Clause-Synced Floating Callout Pills
+const PrimitiveVignetteMetaphorStage: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const beat2 = getBeatFrame(scene, 1, fps, 0.38);
+  const p1 = settle(spring({ frame, fps, config: SPRING_SILKY }));
+  const p2 = settle(spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY }));
+  const checklist: string[] = Array.isArray(d.checklist) ? d.checklist : [];
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div style={{ position: 'relative', width: 1520, height: 680, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: 'translateY(-14px)' }}>
+        {d.imageFile ? (
+          <div
+            style={{
+              width: 1180,
+              height: 620,
+              overflow: 'hidden',
+              opacity: p1,
+              WebkitMaskImage: 'radial-gradient(ellipse 72% 70% at 50% 50%, #000 58%, transparent 100%)',
+              maskImage: 'radial-gradient(ellipse 72% 70% at 50% 50%, #000 58%, transparent 100%)',
+            }}
+          >
+            <Img
+              src={staticFile(d.imageFile)}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                transform: `scale(${1 + Math.sin(frame / 90) * 0.02})`,
+              }}
+            />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 64, alignItems: 'center', opacity: p1 }}>
+            <div style={{ width: 420, height: 320, borderRadius: 24, background: 'radial-gradient(circle, rgba(224,85,73,0.22), transparent 72%)', border: `2px dashed ${TOKENS.coralBorder}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+              <span style={{ fontSize: 68 }}>{d.leftEmoji || '🔥'}</span>
+              <span style={{ fontSize: 28, fontWeight: 900, color: TOKENS.coral }}>{d.leftLabel || '單點故障風險'}</span>
+            </div>
+            <div style={{ width: 460, height: 320, borderRadius: 24, background: 'radial-gradient(circle, rgba(23,183,166,0.22), transparent 72%)', border: `2px solid ${TOKENS.emeraldBorder}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+              <span style={{ fontSize: 68 }}>{d.rightEmoji || '☁️'}</span>
+              <span style={{ fontSize: 28, fontWeight: 900, color: TOKENS.emeraldMint }}>{d.rightLabel || '雲端持續在線'}</span>
+            </div>
+          </div>
+        )}
+
+        {d.leftCallout && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 90,
+              top: 180,
+              padding: '14px 30px',
+              borderRadius: 999,
+              background: TOKENS.card,
+              border: `1.5px solid ${TOKENS.border}`,
+              fontSize: 25,
+              fontWeight: 800,
+              color: TOKENS.ink,
+              boxShadow: '0 16px 40px rgba(0,0,0,0.5)',
+              opacity: p1,
+            }}
+          >
+            {d.leftCallout}
+          </div>
+        )}
+
+        {(d.rightCallout || checklist.length > 0) && (
+          <div
+            style={{
+              position: 'absolute',
+              right: 90,
+              top: checklist.length > 0 ? 310 : 180,
+              padding: checklist.length > 0 ? '20px 26px' : '14px 30px',
+              borderRadius: checklist.length > 0 ? 18 : 999,
+              background: 'rgba(26, 26, 29, 0.92)',
+              border: `2px solid ${TOKENS.amber}`,
+              boxShadow: '0 20px 50px rgba(0,0,0,0.55)',
+              opacity: p2,
+              transform: `translateY(${interpolate(p2, [0, 1], [16, 0])}px)`,
+            }}
+          >
+            {d.rightCallout && <div style={{ fontSize: 25, fontWeight: 900, color: TOKENS.ink, marginBottom: checklist.length > 0 ? 12 : 0 }}>{d.rightCallout}</div>}
+            {checklist.map((item, idx) => (
+              <div key={idx} style={{ fontSize: 20, fontWeight: 700, color: TOKENS.emeraldMint, marginTop: 6 }}>
+                ✓ {item}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 export const StudioVideo: React.FC<{
   payload: ChapterRenderPayload;
 }> = ({ payload }) => {
@@ -3568,17 +4837,21 @@ export const StudioVideo: React.FC<{
   const globalCurSec = payload.chapterStartOffsetSec + curSec;
   const globalPct = Math.min(100, (globalCurSec / Math.max(0.1, payload.globalTotalDurationSec)) * 100);
 
-  // Prefer the most recently started caption so trailing +0.10s hold never delays the next clause's entrance
+  // Prefer the most recently started caption; bridge short <0.38s breath pauses so the dark pill never flickers off/on between sentences!
   let activeCaption: ClauseTiming | undefined;
   for (let i = payload.captions.length - 1; i >= 0; i--) {
     const c = payload.captions[i];
-    if (curSec >= c.start - 0.02 && curSec <= c.end + 0.10) {
+    const nextC = payload.captions[i + 1];
+    const gapToNext = nextC ? nextC.start - c.end : 999;
+    const holdEnd = gapToNext > 0 && gapToNext <= 0.38 ? nextC.start : c.end + 0.14;
+    if (curSec >= c.start - 0.02 && curSec <= holdEnd) {
       activeCaption = c;
       break;
     }
   }
 
   const chapIdxStr = `${String(payload.chapterIndex).padStart(2, '0')} / ${String(payload.totalChapters).padStart(2, '0')}`;
+  const chapHudEnter = settle(spring({ frame, fps, config: SPRING_SILKY }));
 
   return (
     <AbsoluteFill
@@ -3593,42 +4866,44 @@ export const StudioVideo: React.FC<{
     >
       {payload.audioFile ? <Audio src={staticFile(payload.audioFile)} /> : null}
 
-      {/* Continuous Global 3px Top Amber Progress Bar (Seamless across multi-chapter 10-min videos!) */}
+      {/* Continuous Global 4px Top Amber Progress Bar */}
       <div
         style={{
           position: 'absolute',
           top: 0,
           left: 0,
           right: 0,
-          height: 3.5,
-          background: '#353538',
+          height: 4,
+          background: '#333333',
           zIndex: 50,
         }}
       >
         <div style={{ width: `${globalPct}%`, height: '100%', background: TOKENS.amber }} />
       </div>
 
-      {/* Top-Left Chapter HUD */}
+      {/* Top-Left Chapter HUD with Smooth Entrance */}
       <div
         style={{
           position: 'absolute',
-          top: 20,
-          left: 34,
+          top: 22,
+          left: 40,
           display: 'flex',
           alignItems: 'center',
           gap: 12,
           zIndex: 50,
+          opacity: chapHudEnter,
+          transform: chapHudEnter === 1 ? 'none' : `translate3d(${interpolate(chapHudEnter, [0, 1], [-16, 0]).toFixed(2)}px, 0, 0)`,
         }}
       >
-        <span style={{ fontFamily: TOKENS.fontMono, fontSize: 20, fontWeight: 800, color: TOKENS.amber }}>
+        <span style={{ fontFamily: TOKENS.fontMono, fontSize: 21, fontWeight: 800, color: TOKENS.amber }}>
           {chapIdxStr}
         </span>
-        <span style={{ fontSize: 20, fontWeight: 600, color: TOKENS.inkSecondary }}>
+        <span style={{ fontSize: 21, fontWeight: 700, color: TOKENS.inkSecondary }}>
           {payload.chapterTitle}
         </span>
       </div>
 
-      {/* Data-Driven 22-Primitive Scene Router + Universal Thesis Header + Silky Stage Transition */}
+      {/* Data-Driven 31-Primitive Scene Router + Universal Stepper/Thesis Header + Silky Stage Transition */}
       {payload.scenes.map((sc) => {
         const fromF = Math.round(sc.start * fps);
         const durF = Math.max(1, Math.round((sc.end - sc.start) * fps));
@@ -3657,15 +4932,27 @@ export const StudioVideo: React.FC<{
               {sc.primitive === 'row_permission_table' && <PrimitiveRowPermissionTable scene={sc} />}
               {sc.primitive === 'acronym_token_slot' && <PrimitiveAcronymTokenSlot scene={sc} />}
               {sc.primitive === 'metaphor_canvas' && <PrimitiveMetaphorCanvas scene={sc} />}
+              {sc.primitive === 'before_after_transformer' && <PrimitiveBeforeAfterTransformer scene={sc} />}
+              {sc.primitive === 'synergy_puzzle_pair' && <PrimitiveSynergyPuzzlePair scene={sc} />}
+              {sc.primitive === 'multi_perspective_ring' && <PrimitiveMultiPerspectiveRing scene={sc} />}
+              {sc.primitive === 'convergent_hub_bus' && <PrimitiveConvergentHubBus scene={sc} />}
+              {sc.primitive === 'arc_gauge_audit' && <PrimitiveArcGaugeAudit scene={sc} />}
+              {sc.primitive === 'idle_waste_vs_event_wake' && <PrimitiveIdleWasteVsEventWake scene={sc} />}
+              {sc.primitive === 'binary_decision_tree' && <PrimitiveBinaryDecisionTree scene={sc} />}
+              {sc.primitive === 'spotlight_window_tour' && <PrimitiveSpotlightWindowTour scene={sc} />}
+              {sc.primitive === 'vignette_metaphor_stage' && <PrimitiveVignetteMetaphorStage scene={sc} />}
             </SceneStageTransition>
           </Sequence>
         );
       })}
 
-      {/* Editorial Dark Matte Subtitle Pill (Zero Subpixel Vertical Creep) */}
+      {/* Forensic Locked #090909 Borderless Subtitle Capsule (bottom: 61px standard, fontWeight: 800) */}
       {activeCaption && (() => {
+        const subFontSize = payload.subtitleFontSize || 44;
+        const isXlSub = subFontSize >= 54;
+        const isLargeSub = subFontSize > 44;
         const capLocalFrame = Math.max(0, frame - Math.round(activeCaption.start * fps));
-        const capFade = interpolate(capLocalFrame, [0, 5], [0.55, 1], {
+        const capFade = interpolate(capLocalFrame, [0, 5], [0.62, 1], {
           extrapolateLeft: 'clamp',
           extrapolateRight: 'clamp',
         });
@@ -3675,7 +4962,7 @@ export const StudioVideo: React.FC<{
               position: 'absolute',
               left: 0,
               right: 0,
-              bottom: 58,
+              bottom: isXlSub ? 48 : isLargeSub ? 54 : 61,
               display: 'flex',
               justifyContent: 'center',
               pointerEvents: 'none',
@@ -3685,15 +4972,14 @@ export const StudioVideo: React.FC<{
             <div
               style={{
                 background: TOKENS.subtitleBg,
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 12,
-                padding: '12px 34px',
-                fontSize: 40,
-                fontWeight: 700,
+                borderRadius: 14,
+                padding: isXlSub ? '16px 42px' : '16px 38px',
+                fontSize: subFontSize,
+                fontWeight: 800,
                 color: TOKENS.ink,
                 letterSpacing: '0.015em',
-                boxShadow: '0 10px 28px rgba(0,0,0,0.38)',
-                maxWidth: '74%',
+                boxShadow: '0 12px 32px rgba(0,0,0,0.46)',
+                maxWidth: isXlSub ? '78%' : '76%',
                 textAlign: 'center',
                 opacity: capFade,
                 transform: 'none',
