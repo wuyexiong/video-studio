@@ -12,6 +12,22 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
+import {
+  ArcGaugeThresholdTripwireMode,
+  FocusHudBlurHandoffMode,
+  PrimitiveAutonomousBotUiTester,
+  PrimitiveDualTrackPipelineRace,
+  PrimitiveEnvIsolationCompare,
+  PrimitiveGitBranchMergeGraph,
+  PrimitivePrChecksGateCard,
+  PrimitiveRegressionLoopStage,
+  PrimitiveSlotValidationAndStopwatch,
+  PrimitiveSurfaceVsBackgroundIceberg,
+  PrimitiveSwissCheeseDefenseLayers,
+  SkillEditorLintCleanupMode,
+  StudioVectorIcon,
+  SynergyPuzzleExtendedModes,
+} from './CicdGeneralizedPrimitives';
 
 export type Tone = 'neutral' | 'amber' | 'emerald' | 'coral';
 
@@ -46,7 +62,16 @@ export type PrimitiveType =
   | 'idle_waste_vs_event_wake'
   | 'binary_decision_tree'
   | 'spotlight_window_tour'
-  | 'vignette_metaphor_stage';
+  | 'vignette_metaphor_stage'
+  | 'surface_vs_background_iceberg'
+  | 'git_branch_merge_graph'
+  | 'pr_checks_gate_card'
+  | 'slot_validation_and_stopwatch'
+  | 'autonomous_bot_ui_tester'
+  | 'env_isolation_compare'
+  | 'swiss_cheese_defense_layers'
+  | 'regression_loop_stage'
+  | 'dual_track_pipeline_race';
 
 export interface CharTiming {
   text: string;
@@ -82,6 +107,7 @@ export interface ChapterRenderPayload {
   chapterStartOffsetSec: number;
   chapterDurationSec: number;
   globalTotalDurationSec: number;
+  chapterDurationsSec?: number[];
   audioFile: string; // filename inside runtime/public/render_job/
   showWaveform?: boolean;
   subtitleFontSize?: number;
@@ -130,15 +156,20 @@ function settle(p: number): number {
 
 function formatRollingMetric(raw: string, progress: number): string {
   if (progress >= 0.99) return raw;
-  return raw.replace(/\d+(\.\d+)?/g, (match) => {
-    const num = parseFloat(match);
+  return raw.replace(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g, (match) => {
+    const hasComma = match.includes(',');
+    const clean = match.replace(/,/g, '');
+    const num = parseFloat(clean);
     if (isNaN(num)) return match;
     const cur = num * progress;
-    if (match.includes('.')) {
-      const decimals = match.split('.')[1]?.length || 1;
-      return cur.toFixed(decimals);
+    if (clean.includes('.')) {
+      const decimals = clean.split('.')[1]?.length || 1;
+      const [intPart, decPart] = cur.toFixed(decimals).split('.');
+      const fmtInt = hasComma ? intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : intPart;
+      return `${fmtInt}.${decPart}`;
     }
-    return String(Math.round(cur));
+    const rounded = String(Math.round(cur));
+    return hasComma ? rounded.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : rounded;
   });
 }
 
@@ -302,108 +333,229 @@ const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
         pointerEvents: 'none',
       }}
     >
-      {rawSteps.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
-            {rawSteps.map((st, idx) => {
-              const label = typeof st === 'string' ? st : st.label;
-              const status: 'done' | 'active' | 'pending' =
-                typeof st === 'object' && st.status
-                  ? st.status
-                  : idx < activeStepIdx
-                  ? 'done'
-                  : idx === activeStepIdx
-                  ? 'active'
-                  : 'pending';
-              const isDone = status === 'done';
-              const isActive = status === 'active';
-              return (
-                <React.Fragment key={idx}>
-                  <div
-                    style={{
-                      minWidth: 210,
-                      height: 46,
-                      padding: '0 28px',
-                      borderRadius: 999,
-                      background: isActive ? TOKENS.amber : '#38383A',
-                      border: `1.5px solid ${isActive ? TOKENS.amber : '#4A4A4E'}`,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 10,
-                      fontSize: 23,
-                      fontWeight: 800,
-                      color: isActive ? '#141416' : isDone ? TOKENS.ink : TOKENS.inkSecondary,
-                      boxShadow: isActive ? '0 8px 24px rgba(254, 138, 0, 0.28)' : 'none',
-                    }}
-                  >
-                    {isDone && (
-                      <span
-                        style={{
-                          width: 22,
-                          height: 22,
-                          borderRadius: '50%',
-                          background: TOKENS.emeraldMint,
-                          color: '#0B1F1A',
-                          fontSize: 14,
-                          fontWeight: 900,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        ✓
-                      </span>
-                    )}
-                    <span>{label}</span>
-                  </div>
-                  {idx < rawSteps.length - 1 && (
+      {rawSteps.length > 0 && (() => {
+        const useCircleStepper =
+          d.stepperStyle === 'circles' ||
+          Boolean(d.stepperBracket) ||
+          Array.isArray(d.stepperBrackets) ||
+          (d.stepperStyle !== 'pills' && rawSteps.length >= 4);
+        const brackets: Array<{ startIndex: number; endIndex: number; label: string }> = Array.isArray(d.stepperBrackets)
+          ? d.stepperBrackets
+          : d.stepperBracket
+          ? [d.stepperBracket]
+          : [];
+
+        if (useCircleStepper) {
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 0 }}>
+                {rawSteps.map((st, idx) => {
+                  const label = typeof st === 'string' ? st : st.label;
+                  const status: 'done' | 'active' | 'pending' =
+                    typeof st === 'object' && st.status
+                      ? st.status
+                      : idx < activeStepIdx
+                      ? 'done'
+                      : idx === activeStepIdx
+                      ? 'active'
+                      : 'pending';
+                  const isDone = status === 'done';
+                  const isActive = status === 'active';
+                  const matchedBracket = brackets.find((b) => idx >= b.startIndex && idx <= b.endIndex);
+                  const isBStart = matchedBracket && idx === matchedBracket.startIndex;
+                  const isBEnd = matchedBracket && idx === matchedBracket.endIndex;
+                  return (
+                    <React.Fragment key={idx}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 162, position: 'relative' }}>
+                        {matchedBracket && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: -22,
+                              left: isBStart ? 24 : -26,
+                              right: isBEnd ? 24 : -26,
+                              height: 12,
+                              borderTop: `2.5px solid ${TOKENS.amber}`,
+                              borderLeft: isBStart ? `2.5px solid ${TOKENS.amber}` : 'none',
+                              borderRight: isBEnd ? `2.5px solid ${TOKENS.amber}` : 'none',
+                              display: 'flex',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {idx === Math.floor((matchedBracket.startIndex + matchedBracket.endIndex) / 2) && (
+                              <span
+                                style={{
+                                  position: 'absolute',
+                                  top: -24,
+                                  padding: '0 8px',
+                                  background: TOKENS.canvas,
+                                  fontFamily: TOKENS.fontMono,
+                                  fontSize: 17,
+                                  fontWeight: 900,
+                                  color: TOKENS.amber,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {matchedBracket.label}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        <div
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: '50%',
+                            background: isActive ? TOKENS.amberSoft : '#343438',
+                            border: `2.5px solid ${isActive ? TOKENS.amber : isDone ? '#8A8A90' : '#4E4E54'}`,
+                            boxShadow: isActive ? '0 0 22px rgba(254, 138, 0, 0.42)' : 'none',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontFamily: TOKENS.fontMono,
+                            fontSize: 20,
+                            fontWeight: 900,
+                            color: isActive || isDone ? TOKENS.ink : TOKENS.inkMuted,
+                          }}
+                        >
+                          {isDone ? <StudioVectorIcon name="check" color="#FFFFFF" size={20} strokeWidth={2.8} /> : idx + 1}
+                        </div>
+                        <div
+                          style={{
+                            height: 42,
+                            padding: '0 22px',
+                            borderRadius: 999,
+                            background: isActive ? TOKENS.amberSoft : '#303034',
+                            border: `1.5px solid ${isActive ? TOKENS.amber : isDone ? '#5C5C62' : '#444449'}`,
+                            boxShadow: isActive ? '0 6px 20px rgba(254, 138, 0, 0.24)' : 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 20,
+                            fontWeight: 800,
+                            color: isActive || isDone ? TOKENS.ink : TOKENS.inkMuted,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {label}
+                        </div>
+                      </div>
+                      {idx < rawSteps.length - 1 && (
+                        <div style={{ height: 44, display: 'flex', alignItems: 'center', padding: '0 4px' }}>
+                          <svg width="52" height="18" viewBox="0 0 52 18" fill="none">
+                            <line x1="2" y1="9" x2="44" y2="9" stroke={isDone ? '#C4C4CC' : '#525258'} strokeWidth="2.2" />
+                            <polyline points="38 4 45 9 38 14" stroke={isDone ? '#C4C4CC' : '#525258'} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </div>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+              {rawSteps.map((st, idx) => {
+                const label = typeof st === 'string' ? st : st.label;
+                const status: 'done' | 'active' | 'pending' =
+                  typeof st === 'object' && st.status
+                    ? st.status
+                    : idx < activeStepIdx
+                    ? 'done'
+                    : idx === activeStepIdx
+                    ? 'active'
+                    : 'pending';
+                const isDone = status === 'done';
+                const isActive = status === 'active';
+                return (
+                  <React.Fragment key={idx}>
                     <div
                       style={{
-                        width: 38,
-                        height: 2.5,
-                        background: isDone ? TOKENS.emerald : '#4A4A4E',
+                        minWidth: 210,
+                        height: 46,
+                        padding: '0 28px',
+                        borderRadius: 999,
+                        background: isActive ? TOKENS.amber : '#38383A',
+                        border: `1.5px solid ${isActive ? TOKENS.amber : '#4A4A4E'}`,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 10,
+                        fontSize: 23,
+                        fontWeight: 800,
+                        color: isActive ? '#141416' : isDone ? TOKENS.ink : TOKENS.inkSecondary,
+                        boxShadow: isActive ? '0 8px 24px rgba(254, 138, 0, 0.28)' : 'none',
                       }}
-                    />
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </div>
-
-          {subSteps.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              {subSteps.map((sub, sIdx) => {
-                const isSubActive = sIdx === activeSubIdx;
-                const isSubDone = sIdx < activeSubIdx;
-                return (
-                  <div
-                    key={sIdx}
-                    style={{
-                      minWidth: 168,
-                      height: 44,
-                      padding: '0 24px',
-                      borderRadius: 999,
-                      background: isSubActive ? TOKENS.amber : isSubDone ? '#343438' : 'transparent',
-                      border: isSubActive
-                        ? `1.5px solid ${TOKENS.amber}`
-                        : `1.5px dashed ${isSubDone ? TOKENS.emerald : '#66666B'}`,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 21,
-                      fontWeight: 800,
-                      color: isSubActive ? '#141416' : TOKENS.inkSecondary,
-                    }}
-                  >
-                    {sub}
-                  </div>
+                    >
+                      {isDone && (
+                        <span
+                          style={{
+                            width: 22,
+                            height: 22,
+                            borderRadius: '50%',
+                            background: TOKENS.emeraldMint,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <StudioVectorIcon name="check" color="#0B1F1A" size={14} strokeWidth={3} />
+                        </span>
+                      )}
+                      <span>{label}</span>
+                    </div>
+                    {idx < rawSteps.length - 1 && (
+                      <div
+                        style={{
+                          width: 38,
+                          height: 2.5,
+                          background: isDone ? TOKENS.emerald : '#4A4A4E',
+                        }}
+                      />
+                    )}
+                  </React.Fragment>
                 );
               })}
             </div>
-          )}
-        </div>
-      )}
+
+            {subSteps.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                {subSteps.map((sub, sIdx) => {
+                  const isSubActive = sIdx === activeSubIdx;
+                  const isSubDone = sIdx < activeSubIdx;
+                  return (
+                    <div
+                      key={sIdx}
+                      style={{
+                        minWidth: 168,
+                        height: 44,
+                        padding: '0 24px',
+                        borderRadius: 999,
+                        background: isSubActive ? TOKENS.amber : isSubDone ? '#343438' : 'transparent',
+                        border: isSubActive
+                          ? `1.5px solid ${TOKENS.amber}`
+                          : `1.5px dashed ${isSubDone ? TOKENS.emerald : '#66666B'}`,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 21,
+                        fontWeight: 800,
+                        color: isSubActive ? '#141416' : TOKENS.inkSecondary,
+                      }}
+                    >
+                      {sub}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {d.topPill && (
         <div
           style={{
@@ -470,29 +622,36 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const pEnter = spring({ frame: frame - getBeatFrame(scene, Math.min(2, scene.clauses.length - 1), fps, 0.55), fps, config: SPRING_SNAPPY });
 
   if (d.heroUnderlineMode) {
+    const targetPct = Number(d.underlineWidthPct ?? 76);
+    const underlinePct = interpolate(frame, [3, 28], [0, targetPct], {
+      extrapolateLeft: 'clamp',
+      extrapolateRight: 'clamp',
+      easing: Easing.out(Easing.cubic),
+    });
     return (
       <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28, transform: 'translateY(-12px)' }}>
-          <div style={{ position: 'relative', display: 'inline-block', opacity: t1, transform: `scale(${interpolate(t1, [0, 1], [0.92, 1])})` }}>
+          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', opacity: t1, transform: `scale(${interpolate(t1, [0, 1], [0.92, 1])})` }}>
             <div
               style={{
                 fontFamily: TOKENS.fontMono,
-                fontSize: 118,
+                fontSize: 112,
                 fontWeight: 800,
                 color: TOKENS.ink,
                 letterSpacing: '-0.02em',
                 lineHeight: 1.1,
+                textAlign: 'center',
               }}
             >
               {d.headline || 'grill-me'}
             </div>
             <div
               style={{
-                marginTop: 10,
-                height: 12,
-                width: `${Math.round(interpolate(bar, [0, 1], [0, 48]))}%`,
+                marginTop: 14,
+                height: 10,
+                width: `${underlinePct.toFixed(2)}%`,
                 background: TOKENS.amber,
-                borderRadius: 6,
+                borderRadius: 999,
               }}
             />
           </div>
@@ -803,9 +962,13 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const cols = 20;
-  const rows = 10;
+  const is100Grid = Number(d.totalDots) === 100;
+  const cols = Number(d.cols || (is100Grid ? 10 : 20));
+  const rows = Number(d.rows || 10);
   const totalDots = cols * rows;
+  const cellSize = cols <= 12 ? 36 : 26;
+  const cellGap = cols <= 12 ? 14 : 12;
+  const labelText = String(d.metricLabel || '');
   const activeCount = Math.max(1, Math.min(totalDots, Number(d.highlightDots ?? 4)));
   const pal = tonePalette(d.tone || 'amber');
   const beat2 = getBeatFrame(scene, 1, fps, 0.35);
@@ -844,8 +1007,8 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: `repeat(${cols}, 26px)`,
-              gap: 12,
+              gridTemplateColumns: `repeat(${cols}, ${cellSize}px)`,
+              gap: cellGap,
             }}
           >
             {Array.from({ length: totalDots }).map((_, idx) => {
@@ -860,7 +1023,7 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                 ? spring({ frame: frame - lightFrame, fps, config: SPRING_BOUNCE })
                 : 0;
               const pulse = shouldLight && frame > lightFrame + 12 ? 1 + Math.sin((frame + idx) / 15) * 0.06 : 1;
-              const size = interpolate(lightP, [0, 1], [10, 18]) * pulse;
+              const size = interpolate(lightP, [0, 1], [cols <= 12 ? 13 : 10, cols <= 12 ? 22 : 18]) * pulse;
 
               return (
                 <div
@@ -893,25 +1056,27 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
           <div
             style={{
               fontFamily: TOKENS.fontMono,
-              fontSize: 108,
+              fontSize: 110,
               fontWeight: 800,
               color: pal.fg,
               lineHeight: 1,
               textShadow: `0 12px 36px ${pal.bg}`,
+              whiteSpace: 'nowrap',
             }}
           >
             {formatRollingMetric(String(d.metricValue || '0.2%'), countProgress)}
           </div>
           <div
             style={{
-              fontSize: 32,
-              fontWeight: 700,
+              fontSize: labelText.length <= 14 ? 36 : 31,
+              fontWeight: 800,
               color: TOKENS.ink,
-              marginTop: 16,
-              lineHeight: 1.38,
+              marginTop: 18,
+              lineHeight: 1.35,
+              textWrap: 'balance' as any,
             }}
           >
-            {d.metricLabel || ''}
+            {labelText}
           </div>
           {badges.length > 0 && (
             <div style={{ display: 'flex', gap: 14, marginTop: 22, flexWrap: 'wrap' }}>
@@ -1030,11 +1195,19 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                     {formatRollingMetric(nd.bigValue, enter)}
                   </div>
                 )}
-                <div style={{ fontSize: 30, fontWeight: 700, color: TOKENS.ink, marginBottom: nd.subtitle ? 8 : 0 }}>
+                <div
+                  style={{
+                    fontSize: !nd.subtitle && !nd.bigValue ? 34 : 30,
+                    fontWeight: 800,
+                    color: TOKENS.ink,
+                    marginBottom: nd.subtitle ? 8 : 0,
+                    textWrap: 'balance' as any,
+                  }}
+                >
                   {nd.title}
                 </div>
                 {nd.subtitle && (
-                  <div style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, lineHeight: 1.42 }}>
+                  <div style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, lineHeight: 1.42, textWrap: 'balance' as any }}>
                     {nd.subtitle}
                   </div>
                 )}
@@ -1042,8 +1215,8 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                   <div
                     style={{
                       marginTop: 12,
-                      display: 'inline-block',
-                      padding: '5px 14px',
+                      alignSelf: 'flex-start',
+                      padding: '5px 16px',
                       borderRadius: 999,
                       background: pal.bg,
                       border: `1px solid ${pal.border}`,
@@ -1051,6 +1224,8 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                       fontFamily: TOKENS.fontMono,
                       fontSize: 18,
                       fontWeight: 700,
+                      whiteSpace: nd.badge.length <= 12 ? 'nowrap' : 'normal',
+                      textWrap: 'balance' as any,
                     }}
                   >
                     {nd.badge}
@@ -1189,12 +1364,21 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                       transform: itemP === 1 ? 'none' : `translate3d(0, ${interpolate(itemP, [0, 1], [12, 0]).toFixed(2)}px, 0)`,
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 26, fontWeight: 700, color: TOKENS.ink }}>{it.title}</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                      <span
+                        style={{
+                          fontSize: it.detail ? 26 : 29,
+                          fontWeight: 800,
+                          color: TOKENS.ink,
+                          textWrap: 'balance' as any,
+                        }}
+                      >
+                        {it.title}
+                      </span>
                       {it.badge && (
                         <span
                           style={{
-                            padding: '4px 12px',
+                            padding: '4px 14px',
                             borderRadius: 999,
                             background: itemActive ? pal.fg : pal.bg,
                             border: `1px solid ${pal.border}`,
@@ -1202,6 +1386,8 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                             fontFamily: TOKENS.fontMono,
                             fontSize: 16,
                             fontWeight: 800,
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
                           }}
                         >
                           {it.badge}
@@ -1224,14 +1410,22 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
   );
 };
 
-// 6. focus_hud_demo — Unobstructed Cursor + Click Press-Bounce & Emerald Ripple Ring + Backdrop Spotlight
+// 6. focus_hud_demo — Warm Matte Editorial (#323232) Backdrop Blur + Universal Interactive Action Card
 const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const backCards: Array<{ title: string; code: string; status: string }> = Array.isArray(d.backdropCards)
-    ? d.backdropCards
-    : [];
+  if (d.mode === 'blur_handoff' || d.mode === 'blur_strikethrough') {
+    return <FocusHudBlurHandoffMode scene={scene} />;
+  }
+  const backCards: Array<{
+    title: string;
+    detail?: string;
+    code?: string;
+    status?: string;
+    tone?: Tone;
+  }> = Array.isArray(d.backdropCards) ? d.backdropCards : [];
+  const metaPills: string[] = Array.isArray(d.metaPills) ? d.metaPills : [];
 
   const activeClause = getActiveClauseIdx(scene, frame, fps);
   const beat2 = getBeatFrame(scene, 1, fps, 0.32);
@@ -1264,91 +1458,192 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
     : 1;
   const isHovering = frame >= beat3 - 2 && frame < clickFrame + 2;
   const isClicked = frame >= clickFrame + 2 || activeClause >= 3;
+  const hasTopHeader = Boolean(d.topTitle || d.topPill || (Array.isArray(d.stepper) && d.stepper.length > 0));
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      {/* Backdrop Context Cards (Warm Matte #323232, gracefully blurring out as foreground HUD arrives) */}
       <div
         style={{
           display: 'flex',
           flexDirection: 'row',
-          gap: 22,
-          opacity: interpolate(focus, [0, 1], [1, 0.25]),
-          filter: focus > 0.01 ? `blur(${interpolate(focus, [0, 1], [0, 4.5]).toFixed(2)}px)` : 'none',
-          transform: focus === 0 ? 'none' : `scale(${interpolate(focus, [0, 1], [1, 0.96]).toFixed(4)})`,
+          gap: 24,
+          opacity: interpolate(focus, [0, 1], [1, 0.28]),
+          filter: focus > 0.01 ? `blur(${interpolate(focus, [0, 1], [0, 5]).toFixed(2)}px)` : 'none',
+          transform: `translateY(${hasTopHeader ? 18 : -16}px) scale(${interpolate(focus, [0, 1], [1, 0.95]).toFixed(4)})`,
         }}
       >
         {backCards.slice(0, 3).map((bc, i) => {
           const p = settle(spring({ frame: frame - i * 5, fps, config: SPRING_SILKY }));
+          const bcPal = tonePalette(bc.tone || 'amber');
+          const bodyText = bc.detail || bc.code || '';
+          const isMono = Boolean(bc.code && !bc.detail);
           return (
             <div
               key={i}
               style={{
-                width: 450,
+                width: 456,
                 background: TOKENS.card,
                 border: `1.5px solid ${focus < 0.2 && i === Math.min(2, Math.floor(frame / 10)) ? TOKENS.amberBorder : TOKENS.border}`,
-                borderRadius: 16,
-                padding: '22px 24px',
+                borderRadius: 18,
+                padding: '24px 26px',
                 opacity: p,
                 transform: p === 1 ? 'none' : `translate3d(0, ${interpolate(p, [0, 1], [16, 0]).toFixed(2)}px, 0)`,
+                boxShadow: '0 14px 34px rgba(0,0,0,0.28)',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-                <span style={{ fontFamily: TOKENS.fontMono, fontSize: 18, color: TOKENS.inkSecondary }}>{bc.title}</span>
-                <span style={{ fontSize: 15, color: TOKENS.amber, background: TOKENS.amberSoft, padding: '3px 10px', borderRadius: 999 }}>
-                  {bc.status}
-                </span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <span style={{ fontSize: 20, fontWeight: 700, color: TOKENS.inkSecondary }}>{bc.title}</span>
+                {bc.status && (
+                  <span
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 700,
+                      color: bcPal.fg,
+                      background: bcPal.bg,
+                      border: `1px solid ${bcPal.border}`,
+                      padding: '3px 12px',
+                      borderRadius: 999,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {bc.status}
+                  </span>
+                )}
               </div>
-              <div style={{ fontFamily: TOKENS.fontMono, fontSize: 20, color: TOKENS.ink, background: '#222224', padding: '12px 14px', borderRadius: 10 }}>
-                {bc.code}
+              <div
+                style={{
+                  fontFamily: isMono ? TOKENS.fontMono : TOKENS.fontSans,
+                  fontSize: 21,
+                  fontWeight: isMono ? 600 : 700,
+                  color: TOKENS.ink,
+                  background: '#29292B',
+                  border: `1px solid ${TOKENS.border}`,
+                  padding: '14px 16px',
+                  borderRadius: 12,
+                  lineHeight: 1.42,
+                }}
+              >
+                {bodyText}
               </div>
             </div>
           );
         })}
       </div>
 
+      {/* Foreground Warm Matte Editorial Interactive Spotlight Card (#323232 + #3B3B3D) */}
       <div
         style={{
           position: 'absolute',
-          top: 150,
+          top: hasTopHeader ? 245 : 215,
           opacity: focus,
-          transform: focus === 1 ? 'none' : `translate3d(0, ${interpolate(focus, [0, 1], [-84, 0]).toFixed(2)}px, 0)`,
+          transform: focus === 1 ? 'none' : `translate3d(0, ${interpolate(focus, [0, 1], [36, 0]).toFixed(2)}px, 0) scale(${interpolate(focus, [0, 1], [0.96, 1]).toFixed(4)})`,
         }}
       >
         <div
           style={{
-            width: 820,
-            background: '#0E0F12',
-            borderRadius: 24,
-            border: `2px solid ${isClicked ? TOKENS.emerald : isHovering ? TOKENS.amber : 'rgba(255,255,255,0.18)'}`,
-            padding: '28px 34px',
+            width: 880,
+            background: TOKENS.card,
+            borderRadius: 22,
+            border: `2px solid ${isClicked ? TOKENS.emerald : isHovering ? TOKENS.amber : '#4A4A4F'}`,
+            borderTop: `4px solid ${isClicked ? TOKENS.emerald : TOKENS.amber}`,
+            padding: '30px 36px',
             boxShadow: isClicked
-              ? '0 30px 70px rgba(0,0,0,0.6), 0 0 32px rgba(52, 211, 153, 0.22)'
-              : '0 30px 70px rgba(0,0,0,0.55)',
+              ? '0 32px 72px rgba(0,0,0,0.58), 0 0 36px rgba(19, 159, 107, 0.24)'
+              : '0 32px 72px rgba(0,0,0,0.56)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 20,
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 22, fontWeight: 700, color: TOKENS.ink }}>
-              {d.hudTitle || 'Action Required'}
-            </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {d.hudEyebrow && (
+                <span style={{ fontFamily: TOKENS.fontMono, fontSize: 15, fontWeight: 800, color: TOKENS.amber, letterSpacing: '0.04em' }}>
+                  {d.hudEyebrow}
+                </span>
+              )}
+              <span style={{ fontSize: 26, fontWeight: 800, color: TOKENS.ink }}>
+                {d.hudTitle || '關鍵決策確認'}
+              </span>
+            </div>
             {d.hudBadge && (
-              <span style={{ fontFamily: TOKENS.fontMono, fontSize: 17, color: TOKENS.amber, background: TOKENS.amberSoft, padding: '4px 14px', borderRadius: 999, fontWeight: 700 }}>
+              <span
+                style={{
+                  fontFamily: TOKENS.fontMono,
+                  fontSize: 17,
+                  color: isClicked ? TOKENS.emeraldMint : TOKENS.amber,
+                  background: isClicked ? TOKENS.emeraldSoft : TOKENS.amberSoft,
+                  border: `1px solid ${isClicked ? TOKENS.emeraldBorder : TOKENS.amberBorder}`,
+                  padding: '5px 16px',
+                  borderRadius: 999,
+                  fontWeight: 800,
+                }}
+              >
                 {d.hudBadge}
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 20, background: '#18191E', padding: '16px 22px', borderRadius: 14 }}>
-            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 21, color: '#E4E4E7', flex: 1 }}>
-              {d.promptText || ''}
-            </span>
+
+          {metaPills.length > 0 && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {metaPills.map((mp, idx) => (
+                <span
+                  key={idx}
+                  style={{
+                    padding: '4px 14px',
+                    borderRadius: 999,
+                    background: '#29292B',
+                    border: `1px solid ${TOKENS.border}`,
+                    fontSize: 17,
+                    fontWeight: 700,
+                    color: TOKENS.inkSecondary,
+                  }}
+                >
+                  {mp}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 24,
+              background: '#28282A',
+              border: `1px solid ${TOKENS.border}`,
+              padding: '18px 24px',
+              borderRadius: 16,
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+              <span
+                style={{
+                  fontFamily: d.monoPrompt ? TOKENS.fontMono : TOKENS.fontSans,
+                  fontSize: 23,
+                  fontWeight: 700,
+                  color: TOKENS.ink,
+                  lineHeight: 1.4,
+                }}
+              >
+                {d.promptText || ''}
+              </span>
+              {d.hudSubtext && (
+                <span style={{ fontSize: 17, fontWeight: 600, color: TOKENS.inkSecondary }}>{d.hudSubtext}</span>
+              )}
+            </div>
+
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'relative', flexShrink: 0 }}>
               <div style={{ position: 'relative', display: 'inline-flex' }}>
                 {rippleP > 0 && rippleP < 1 && (
                   <span
                     style={{
                       position: 'absolute',
-                      inset: -4,
+                      inset: -5,
                       borderRadius: 999,
-                      border: `2px solid ${TOKENS.emerald}`,
+                      border: `2.5px solid ${TOKENS.emeraldMint}`,
                       opacity: 1 - rippleP,
                       transform: `scale(${(1 + rippleP * 0.45).toFixed(3)})`,
                       pointerEvents: 'none',
@@ -1357,22 +1652,21 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                 )}
                 <span
                   style={{
-                    minWidth: 142,
+                    minWidth: 146,
                     textAlign: 'center',
                     whiteSpace: 'nowrap',
-                    padding: '9px 22px',
+                    padding: '10px 24px',
                     borderRadius: 999,
-                    background: isClicked ? TOKENS.emerald : isHovering ? 'rgba(52, 211, 153, 0.22)' : TOKENS.emeraldSoft,
-                    border: `1.5px solid ${isHovering ? TOKENS.amber : TOKENS.emerald}`,
-                    color: isClicked ? '#111113' : TOKENS.emerald,
-                    fontFamily: TOKENS.fontMono,
-                    fontSize: 19,
+                    background: isClicked ? TOKENS.emerald : isHovering ? TOKENS.amber : TOKENS.amberSoft,
+                    border: `1.5px solid ${isClicked ? TOKENS.emeraldMint : TOKENS.amber}`,
+                    color: isClicked ? '#FFFFFF' : isHovering ? '#141416' : TOKENS.amber,
+                    fontSize: 20,
                     fontWeight: 800,
                     transform: btnPressScale === 1 ? 'none' : `scale(${btnPressScale.toFixed(3)})`,
-                    boxShadow: isClicked ? '0 0 22px rgba(52, 211, 153, 0.45)' : 'none',
+                    boxShadow: isClicked ? '0 0 24px rgba(19, 159, 107, 0.45)' : 'none',
                   }}
                 >
-                  {isClicked ? `✓ ${d.clickedLabel || '已锁定'}` : d.primaryAction || '切换身份'}
+                  {isClicked ? `✓ ${d.clickedLabel || '已啟用'}` : d.primaryAction || '一鍵啟用'}
                 </span>
                 <svg
                   width="28"
@@ -1388,23 +1682,23 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                     zIndex: 4,
                   }}
                 >
-                  <path d="M4 2L20 11L13 13L16 20L13 21.5L10 14.5L5 19Z" fill="#FFF" stroke="#111" strokeWidth="1.5" />
+                  <path d="M4 2L20 11L13 13L16 20L13 21.5L10 14.5L5 19Z" fill="#FFF" stroke="#141416" strokeWidth="1.5" />
                 </svg>
               </div>
               {d.secondaryAction && (
                 <span
                   style={{
-                    minWidth: 88,
+                    minWidth: 92,
                     textAlign: 'center',
                     whiteSpace: 'nowrap',
-                    padding: '9px 18px',
+                    padding: '10px 18px',
                     borderRadius: 999,
-                    border: `1px solid ${TOKENS.coralBorder}`,
-                    color: TOKENS.coral,
-                    fontFamily: TOKENS.fontMono,
+                    background: '#323235',
+                    border: `1px solid ${TOKENS.border}`,
+                    color: TOKENS.inkSecondary,
                     fontSize: 19,
                     fontWeight: 700,
-                    opacity: isClicked ? 0.32 : 0.88,
+                    opacity: isClicked ? 0.35 : 0.9,
                   }}
                 >
                   {d.secondaryAction}
@@ -1418,7 +1712,7 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   );
 };
 
-// 7. live_web_showcase — True 60fps Video Stream + Footnote + Side Forensic Callout
+// 7. live_web_showcase — True 60fps Video Stream + Footnote + Non-Overlapping Side Forensic Callout
 const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -1426,8 +1720,8 @@ const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene }> = ({ scene }) =
   const callout = d.callout;
   const beat2 = getBeatFrame(scene, 1, fps, 0.48);
 
-  const enter = spring({ frame, fps, config: SPRING_SNAPPY });
-  const sideEnter = spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY });
+  const enter = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
+  const sideEnter = settle(spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY }));
   const pal = tonePalette(callout?.tone || 'coral');
 
   return (
@@ -1435,70 +1729,79 @@ const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene }> = ({ scene }) =
       <div
         style={{
           display: 'flex',
-          flexDirection: 'column',
+          flexDirection: 'row',
           alignItems: 'center',
-          opacity: enter,
-          transform: `translateY(-24px) translateX(${callout ? interpolate(sideEnter, [0, 1], [0, -120]) : 0}px) scale(${interpolate(enter, [0, 1], [0.95, 1])})`,
+          justifyContent: 'center',
+          gap: 38,
+          transform: 'translateY(-20px)',
         }}
       >
         <div
           style={{
-            width: 1120,
-            height: 700,
-            borderRadius: 14,
-            overflow: 'hidden',
-            border: '1px solid rgba(255,255,255,0.16)',
-            boxShadow: '0 28px 68px rgba(0,0,0,0.52)',
-            background: '#1A1A1D',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            opacity: enter,
+            transform: `translateX(${callout ? interpolate(sideEnter, [0, 1], [235, 0]) : 0}px) scale(${interpolate(enter, [0, 1], [0.95, 1]) * (callout ? interpolate(sideEnter, [0, 1], [1.05, 1]) : 1)})`,
           }}
         >
-          {d.videoFile ? (
-            <OffthreadVideo src={staticFile(d.videoFile)} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          ) : (
-            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: TOKENS.fontMono, fontSize: 28, color: TOKENS.inkMuted }}>
-              {d.placeholderLabel || 'Live Stream'}
+          <div
+            style={{
+              width: callout ? 1040 : 1160,
+              height: callout ? 640 : 700,
+              borderRadius: 16,
+              overflow: 'hidden',
+              border: `1.5px solid ${TOKENS.border}`,
+              boxShadow: '0 28px 68px rgba(0,0,0,0.52)',
+              background: '#1A1A1D',
+            }}
+          >
+            {d.videoFile ? (
+              <OffthreadVideo src={staticFile(d.videoFile)} muted style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#141416' }} />
+            ) : (
+              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: TOKENS.fontMono, fontSize: 28, color: TOKENS.inkMuted }}>
+                {d.placeholderLabel || 'Live Stream'}
+              </div>
+            )}
+          </div>
+          {d.footnote && (
+            <div style={{ marginTop: 14, fontFamily: TOKENS.fontMono, fontSize: 20, color: TOKENS.inkSecondary }}>
+              {d.footnote}
             </div>
           )}
         </div>
-        {d.footnote && (
-          <div style={{ marginTop: 14, fontFamily: TOKENS.fontMono, fontSize: 20, color: TOKENS.inkSecondary }}>
-            {d.footnote}
+
+        {callout && (
+          <div
+            style={{
+              width: 440,
+              background: TOKENS.card,
+              border: `2px solid ${pal.border}`,
+              borderRadius: 18,
+              padding: '30px 32px',
+              boxShadow: '0 24px 54px rgba(0,0,0,0.52)',
+              opacity: sideEnter,
+              transform: `translateX(${interpolate(sideEnter, [0, 1], [28, 0])}px)`,
+              flexShrink: 0,
+            }}
+          >
+            {callout.badge && (
+              <div style={{ display: 'inline-block', padding: '5px 14px', borderRadius: 999, background: pal.bg, border: `1px solid ${pal.border}`, color: pal.fg, fontFamily: TOKENS.fontMono, fontSize: 17, fontWeight: 800, marginBottom: 14 }}>
+                {callout.badge}
+              </div>
+            )}
+            <div style={{ fontSize: 30, fontWeight: 800, color: TOKENS.ink, marginBottom: 12, lineHeight: 1.28, textWrap: 'balance' as any }}>{callout.title}</div>
+            {callout.bigMetric && (
+              <div style={{ fontFamily: TOKENS.fontMono, fontSize: 54, fontWeight: 800, color: pal.fg, lineHeight: 1.08 }}>
+                {callout.bigMetric}
+              </div>
+            )}
+            {callout.note && (
+              <div style={{ fontSize: 21, fontWeight: 600, color: TOKENS.inkSecondary, marginTop: 10, lineHeight: 1.42, textWrap: 'balance' as any }}>{callout.note}</div>
+            )}
           </div>
         )}
       </div>
-
-      {callout && (
-        <div
-          style={{
-            position: 'absolute',
-            right: 110,
-            top: 270,
-            width: 430,
-            background: '#272426',
-            border: `1.5px solid ${pal.border}`,
-            borderRadius: 16,
-            padding: '26px 28px',
-            boxShadow: '0 24px 54px rgba(0,0,0,0.55)',
-            opacity: sideEnter,
-            transform: `translateY(${interpolate(sideEnter, [0, 1], [26, 0])}px)`,
-          }}
-        >
-          {callout.badge && (
-            <div style={{ display: 'inline-block', padding: '4px 12px', borderRadius: 999, background: pal.bg, color: pal.fg, fontFamily: TOKENS.fontMono, fontSize: 17, fontWeight: 800, marginBottom: 12 }}>
-              {callout.badge}
-            </div>
-          )}
-          <div style={{ fontSize: 28, fontWeight: 700, color: TOKENS.ink, marginBottom: 10 }}>{callout.title}</div>
-          {callout.bigMetric && (
-            <div style={{ fontFamily: TOKENS.fontMono, fontSize: 48, fontWeight: 800, color: pal.fg, lineHeight: 1.1 }}>
-              {callout.bigMetric}
-            </div>
-          )}
-          {callout.note && (
-            <div style={{ fontSize: 20, color: TOKENS.inkSecondary, marginTop: 8 }}>{callout.note}</div>
-          )}
-        </div>
-      )}
     </AbsoluteFill>
   );
 };
@@ -1508,20 +1811,22 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const lines: Array<{ text: string; kind?: 'cmd' | 'out' | 'comment'; highlight?: boolean }> = Array.isArray(d.lines)
-    ? d.lines
-    : [];
-  const activeClause = getActiveClauseIdx(scene, frame, fps);
-  const stepF = Math.max(8, Math.floor((scene.duration * fps * 0.68) / Math.max(1, lines.length)));
-
+  const lines: Array<{
+    text: string;
+    kind?: 'cmd' | 'out' | 'comment' | 'bullet' | 'tree' | 'input';
+    highlight?: boolean;
+    circleWord?: string;
+    stepClause?: number;
+  }> = Array.isArray(d.lines) ? d.lines : [];
   const winEnter = spring({ frame, fps, config: SPRING_SILKY });
+  const isAgentChat = lines.some((l) => l.kind === 'bullet' || l.kind === 'tree' || l.kind === 'input');
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div
         style={{
-          width: 1340,
-          background: '#191A1D',
+          width: isAgentChat ? 960 : 1340,
+          background: isAgentChat ? '#28282B' : '#191A1D',
           border: `1.5px solid ${TOKENS.border}`,
           borderRadius: 18,
           overflow: 'hidden',
@@ -1530,37 +1835,49 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
           transform: `translateY(${interpolate(winEnter, [0, 1], [22, -20])}px)`,
         }}
       >
-        <div style={{ padding: '15px 24px', background: '#222327', borderBottom: `1px solid ${TOKENS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div
+          style={{
+            padding: '15px 24px',
+            background: '#222327',
+            borderBottom: `1px solid ${TOKENS.border}`,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            position: 'relative',
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#FF5F56' }} />
-            <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#FFBD2E' }} />
-            <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#27C93F' }} />
-            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, fontWeight: 600, marginLeft: 8 }}>
-              {d.windowTitle || 'zsh · terminal'}
-            </span>
+            <span style={{ width: 12, height: 12, borderRadius: '50%', background: isAgentChat ? '#55555A' : '#FF5F56' }} />
+            <span style={{ width: 12, height: 12, borderRadius: '50%', background: isAgentChat ? '#55555A' : '#FFBD2E' }} />
+            <span style={{ width: 12, height: 12, borderRadius: '50%', background: isAgentChat ? '#55555A' : '#27C93F' }} />
+            {!isAgentChat && (
+              <span style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, fontWeight: 600, marginLeft: 8 }}>
+                {d.windowTitle || 'zsh · terminal'}
+              </span>
+            )}
           </div>
-          {d.badge && (
+          {isAgentChat && (
+            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 20, color: TOKENS.inkSecondary, fontWeight: 700 }}>
+              {d.windowTitle || 'agent'}
+            </span>
+          )}
+          {d.badge ? (
             <span style={{ fontFamily: TOKENS.fontMono, fontSize: 16, color: TOKENS.emerald, background: TOKENS.emeraldSoft, padding: '4px 14px', borderRadius: 999, fontWeight: 700 }}>
               {d.badge}
             </span>
+          ) : (
+            <span style={{ width: isAgentChat ? 56 : 0 }} />
           )}
         </div>
-        <div style={{ padding: '28px 34px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ padding: isAgentChat ? '32px 42px' : '28px 34px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {lines.map((ln, idx) => {
             const numClauses = Math.max(1, scene.clauses.length);
             const lineForClause = (c: number) =>
-              lines.length > numClauses
-                ? Math.min(lines.length - 1, c + 1)
-                : Math.min(lines.length - 1, c);
-            const startF =
-              idx === 0
-                ? 0
-                : getBeatFrame(
-                    scene,
-                    Math.min(numClauses - 1, Math.max(0, lines.length > numClauses ? idx - 1 : idx)),
-                    fps,
-                    idx / Math.max(1, lines.length)
-                  );
+              lines.length > numClauses ? Math.min(lines.length - 1, c + 1) : Math.min(lines.length - 1, c);
+            const targetClause = typeof ln.stepClause === 'number'
+              ? ln.stepClause
+              : Math.min(numClauses - 1, Math.max(0, lines.length > numClauses ? idx - 1 : idx));
+            const startF = idx === 0 ? 0 : getBeatFrame(scene, targetClause, fps, idx / Math.max(1, lines.length));
             const p = settle(spring({ frame: frame - startF, fps, config: SPRING_SILKY }));
             const typeP = interpolate(frame, [startF, startF + 16], [0.12, 1], {
               extrapolateLeft: 'clamp',
@@ -1568,14 +1885,20 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
             });
             const charsToShow = frame >= startF ? Math.ceil(ln.text.length * typeP) : 0;
             const focusW = getSmoothClauseValue(scene, frame, fps, (c) => (lineForClause(c) === idx ? 1 : 0));
-            const visW = getSmoothClauseValue(scene, frame, fps, (c) => {
-              const cur = lineForClause(c);
-              if (cur === idx) return 1;
-              if (idx < cur) return 0.66;
-              return 0.24;
-            });
+            const visW = isAgentChat
+              ? frame >= startF ? 1 : 0
+              : getSmoothClauseValue(scene, frame, fps, (c) => {
+                  const cur = lineForClause(c);
+                  if (cur === idx) return 1;
+                  if (idx < cur) return 0.66;
+                  return 0.24;
+                });
             const isCurrentActive = focusW > 0.45 && frame >= startF;
-            const color = isCurrentActive
+            const color = isAgentChat
+              ? ln.kind === 'tree'
+                ? TOKENS.inkSecondary
+                : TOKENS.ink
+              : isCurrentActive
               ? ln.kind === 'out'
                 ? TOKENS.emerald
                 : TOKENS.amber
@@ -1584,34 +1907,110 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
               : ln.kind === 'out'
               ? TOKENS.emerald
               : TOKENS.ink;
-            const slideX = p === 1 ? 6 * focusW : interpolate(p, [0, 1], [16, 6 * focusW]);
+            const slideX = isAgentChat ? 0 : p === 1 ? 6 * focusW : interpolate(p, [0, 1], [16, 6 * focusW]);
+            const visibleStr = ln.text.slice(0, charsToShow);
+            const circleDrawP = ln.circleWord
+              ? interpolate(frame, [startF + 6, startF + 20], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+              : 0;
+
+            const renderTextWithCircle = () => {
+              if (!ln.circleWord || !visibleStr.includes(ln.circleWord)) {
+                return visibleStr;
+              }
+              const parts = visibleStr.split(ln.circleWord);
+              return (
+                <>
+                  {parts[0]}
+                  <span style={{ position: 'relative', display: 'inline-block', padding: '0 8px' }}>
+                    {ln.circleWord}
+                    <svg
+                      viewBox="0 0 110 56"
+                      style={{
+                        position: 'absolute',
+                        left: -8,
+                        top: -8,
+                        width: 'calc(100% + 16px)',
+                        height: 'calc(100% + 16px)',
+                        overflow: 'visible',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <ellipse
+                        cx="55"
+                        cy="28"
+                        rx="50"
+                        ry="23"
+                        fill="none"
+                        stroke={TOKENS.amber}
+                        strokeWidth="3.8"
+                        strokeLinecap="round"
+                        strokeDasharray="240"
+                        strokeDashoffset={240 * (1 - circleDrawP)}
+                      />
+                    </svg>
+                  </span>
+                  {parts.slice(1).join(ln.circleWord)}
+                </>
+              );
+            };
+
+            if (ln.kind === 'input') {
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    background: '#3D3D42',
+                    borderRadius: 12,
+                    padding: '12px 20px',
+                    fontFamily: TOKENS.fontSans,
+                    fontSize: 26,
+                    fontWeight: 800,
+                    color: TOKENS.ink,
+                    opacity: p * visW,
+                  }}
+                >
+                  &gt; {renderTextWithCircle()}
+                </div>
+              );
+            }
+
             return (
               <div
                 key={idx}
                 style={{
-                  fontFamily: TOKENS.fontMono,
-                  fontSize: 25,
+                  fontFamily: isAgentChat && ln.kind !== 'tree' ? TOKENS.fontSans : TOKENS.fontMono,
+                  fontSize: isAgentChat ? (ln.kind === 'tree' ? 23 : 28) : 25,
+                  fontWeight: isAgentChat ? (ln.kind === 'tree' ? 600 : 800) : 600,
                   color,
-                  background: focusW > 0.02 ? `rgba(245, 158, 11, ${(0.13 * focusW).toFixed(3)})` : 'transparent',
-                  borderLeft: `3.5px solid rgba(245, 158, 11, ${focusW.toFixed(3)})`,
-                  padding: '8px 16px',
+                  background: !isAgentChat && focusW > 0.02 ? `rgba(245, 158, 11, ${(0.13 * focusW).toFixed(3)})` : 'transparent',
+                  borderLeft: isAgentChat ? 'none' : `3.5px solid rgba(245, 158, 11, ${focusW.toFixed(3)})`,
+                  padding: isAgentChat ? (ln.kind === 'tree' ? '2px 0 2px 24px' : '4px 0') : '8px 16px',
                   borderRadius: 8,
                   opacity: p * visW,
                   transform: Math.abs(slideX) < 0.05 ? 'none' : `translate3d(${slideX.toFixed(2)}px, 0, 0)`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 14,
                 }}
               >
-                {ln.text.slice(0, charsToShow)}
-                <span
-                  style={{
-                    display: 'inline-block',
-                    width: 10,
-                    height: 22,
-                    background: color,
-                    marginLeft: 5,
-                    verticalAlign: 'middle',
-                    opacity: (typeP < 1 || (isCurrentActive && frame % 18 < 10)) && frame >= startF ? 1 : 0,
-                  }}
-                />
+                {ln.kind === 'bullet' && (
+                  <span style={{ width: 13, height: 13, borderRadius: '50%', background: TOKENS.amber, flexShrink: 0 }} />
+                )}
+                {ln.kind === 'tree' && <span style={{ color: TOKENS.inkMuted, fontFamily: TOKENS.fontMono }}>└</span>}
+                <span>
+                  {renderTextWithCircle()}
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: isAgentChat ? 3 : 10,
+                      height: 24,
+                      background: color,
+                      marginLeft: 5,
+                      verticalAlign: 'middle',
+                      opacity: (typeP < 1 || (isCurrentActive && frame % 18 < 10)) && frame >= startF ? 1 : 0,
+                    }}
+                  />
+                </span>
               </div>
             );
           })}
@@ -1810,6 +2209,9 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
+  if (d.mode === 'lint_cleanup' || Array.isArray(d.codeLines)) {
+    return <SkillEditorLintCleanupMode scene={scene} />;
+  }
   const items: Array<{
     code: string;
     translation?: string;
@@ -1928,19 +2330,32 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
                   >
                     {String(idx + 1).padStart(2, '0')}
                   </span>
-                  <div style={{ fontFamily: TOKENS.fontMono, fontSize: 23, fontWeight: 600, color: TOKENS.ink, lineHeight: 1.4 }}>
-                    {isRevealed ? it.code.slice(0, charsToShow) : '........................................................'}
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        width: 11,
-                        height: 22,
-                        background: pal.fg,
-                        marginLeft: 4,
-                        verticalAlign: 'middle',
-                        opacity: isCurrentFocus && typeP < 1 ? 1 : 0,
-                      }}
-                    />
+                  <div style={{ fontFamily: TOKENS.fontMono, fontSize: 23, fontWeight: 600, color: TOKENS.ink, lineHeight: 1.4, flex: 1 }}>
+                    {isRevealed ? (
+                      <>
+                        {it.code.slice(0, charsToShow)}
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            width: 11,
+                            height: 22,
+                            background: pal.fg,
+                            marginLeft: 4,
+                            verticalAlign: 'middle',
+                            opacity: isCurrentFocus && typeP < 1 ? 1 : 0,
+                          }}
+                        />
+                      </>
+                    ) : (
+                      <div
+                        style={{
+                          width: `${Math.min(72, 34 + ((idx * 13) % 28))}%`,
+                          height: 14,
+                          borderRadius: 999,
+                          background: 'rgba(255, 255, 255, 0.14)',
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -1989,11 +2404,7 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
   );
 };
 
-// 12. stack_slice_builder — 3-Phase Vertical Slice Stack Builder:
-// Phase 0 (Clause 0): Horizontal Technical Layer Anti-Pattern (🚫 無法測試)
-// Phase 1 (Clauses 1-2): Bottom-Up Brick-by-Brick Stacking (資料庫 -> 後端邏輯 -> 前端畫面)
-// Phase 2 (Clause 3): Green Verification Checkmark + White macOS Browser Preview (shop.example.com/login)
-// Phase 3 (Clause 4+): Second Feature Container Bottom-Up Brick-by-Brick Stacking (② 加入購物車)
+// 12. stack_slice_builder — Clean Side-by-Side Modular Vertical Slice Stack Builder
 const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -2008,135 +2419,12 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
   }> = Array.isArray(d.columns) ? d.columns : [];
 
   const layerColorMap = {
-    blue: { bg: '#3B82F6', border: '#60A5FA', text: '#FFFFFF' },
-    purple: { bg: '#8B5CF6', border: '#A78BFA', text: '#FFFFFF' },
-    amber: { bg: '#F59E0B', border: '#FBBF24', text: '#141416' },
-    emerald: { bg: '#10B981', border: '#34D399', text: '#141416' },
-    coral: { bg: '#EF4444', border: '#F87171', text: '#FFFFFF' },
+    blue: { bg: '#2F3642', border: '#6E8CA8', text: '#FFFFFF', sub: '#CBD5E1' },
+    purple: { bg: 'rgba(124, 91, 253, 0.18)', border: '#8B70FD', text: '#FFFFFF', sub: '#DDD6FE' },
+    amber: { bg: 'rgba(254, 138, 0, 0.18)', border: '#FE8A00', text: '#FFFFFF', sub: '#FDBA74' },
+    emerald: { bg: 'rgba(19, 159, 107, 0.20)', border: '#17B7A6', text: '#FFFFFF', sub: '#6EE7B7' },
+    coral: { bg: 'rgba(224, 85, 73, 0.18)', border: '#E05549', text: '#FFFFFF', sub: '#FCA5A5' },
   };
-
-  const clause1F = getBeatFrame(scene, 1, fps, 0.22);
-  const clause2F = getBeatFrame(scene, 2, fps, 0.42);
-  const clause3F = getBeatFrame(scene, 3, fps, 0.64);
-  const clause4F = getBeatFrame(scene, 4, fps, 0.80);
-
-  const inHorizontalBadPhase = d.showHorizontalContrast !== false && scene.clauses.length >= 4 && frame < clause1F - 2;
-  const inBrowserVerifyPhase = d.showBrowserPreview !== false && scene.clauses.length >= 5 && frame >= clause3F - 2 && frame < clause4F - 2;
-
-  // Phase 0: Horizontal Technical Layer Anti-Pattern
-  if (inHorizontalBadPhase) {
-    const enterP = spring({ frame, fps, config: SPRING_SNAPPY });
-    const warnP = spring({ frame: frame - Math.min(18, Math.floor(clause1F * 0.35)), fps, config: SPRING_SNAPPY });
-    const horizRows = [
-      { title: '前端畫面', sub: 'UI', color: '#F59E0B', dimmed: true },
-      { title: '後端邏輯', sub: 'Logic', color: '#8B5CF6', dimmed: true },
-      { title: '資料庫', sub: 'Database', color: '#3B82F6', dimmed: false },
-    ];
-    return (
-      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 18,
-            transform: 'translateY(26px)',
-            opacity: enterP,
-          }}
-        >
-          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {horizRows.map((hr, rIdx) => (
-              <div
-                key={rIdx}
-                style={{
-                  width: 880,
-                  height: 106,
-                  borderRadius: 16,
-                  background: '#252529',
-                  border: `1.5px solid ${hr.dimmed ? 'rgba(239, 68, 68, 0.42)' : 'rgba(59, 130, 246, 0.45)'}`,
-                  padding: '0 24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  opacity: hr.dimmed ? interpolate(warnP, [0, 1], [0.9, 0.32]) : 0.95,
-                }}
-              >
-                <div style={{ width: 120 }}>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: hr.color }}>{hr.title}</div>
-                  <div style={{ fontFamily: TOKENS.fontMono, fontSize: 17, color: TOKENS.inkSecondary }}>{hr.sub}</div>
-                </div>
-                <div style={{ display: 'flex', gap: 14, flex: 1, justifyContent: 'flex-end' }}>
-                  {[0, 1, 2, 3, 4].map((bIdx) => (
-                    <div
-                      key={bIdx}
-                      style={{
-                        width: 122,
-                        height: 68,
-                        borderRadius: 10,
-                        background: hr.color,
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            {/* Red "🚫 無法測試" Overlay Banner across top 2 rows */}
-            <div
-              style={{
-                position: 'absolute',
-                top: 68,
-                left: 0,
-                right: 0,
-                display: 'flex',
-                justifyContent: 'center',
-                opacity: warnP,
-                transform: `scale(${interpolate(warnP, [0, 1], [0.88, 1])})`,
-              }}
-            >
-              <div
-                style={{
-                  padding: '10px 30px',
-                  borderRadius: 14,
-                  background: 'rgba(24, 18, 19, 0.92)',
-                  border: `2px solid ${TOKENS.coral}`,
-                  fontSize: 38,
-                  fontWeight: 900,
-                  color: TOKENS.coral,
-                  boxShadow: '0 16px 40px rgba(0,0,0,0.6)',
-                }}
-              >
-                🚫 按技術拆：畫面出來前完全無法測試
-              </div>
-            </div>
-          </div>
-
-          {/* Solution Pill at Bottom */}
-          <div
-            style={{
-              marginTop: 8,
-              padding: '10px 28px',
-              borderRadius: 14,
-              background: '#2E2A22',
-              border: `2px solid ${TOKENS.amber}`,
-              fontSize: 25,
-              fontWeight: 800,
-              color: TOKENS.ink,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              opacity: warnP,
-            }}
-          >
-            <span style={{ padding: '2px 12px', borderRadius: 999, background: TOKENS.amber, color: '#141416', fontSize: 18, fontWeight: 900 }}>
-              解法
-            </span>
-            <span>to-tickets 改用「使用者功能」垂直拆任務</span>
-          </div>
-        </div>
-      </AbsoluteFill>
-    );
-  }
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -2150,123 +2438,15 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
         }}
       >
         {columns.map((col, cIdx) => {
-          // If we are in Browser Verify Phase (Clause 3), replace Column 2 temporarily with a white macOS Browser Window!
-          if (cIdx === 1 && inBrowserVerifyPhase) {
-            const brP = spring({ frame: frame - clause3F, fps, config: SPRING_SNAPPY });
-            return (
-              <div
-                key="browser-verify"
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 20,
-                  opacity: brP,
-                  transform: `translateY(${interpolate(brP, [0, 1], [24, 0])}px) scale(${interpolate(brP, [0, 1], [0.94, 1])})`,
-                }}
-              >
-                <div
-                  style={{
-                    width: 560,
-                    background: '#F4F4F6',
-                    borderRadius: 16,
-                    overflow: 'hidden',
-                    boxShadow: '0 28px 70px rgba(0,0,0,0.55)',
-                    border: '2px solid rgba(255,255,255,0.2)',
-                  }}
-                >
-                  {/* Browser Titlebar */}
-                  <div
-                    style={{
-                      padding: '12px 18px',
-                      background: '#38383D',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                    }}
-                  >
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#FF5F56' }} />
-                      <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#FFBD2E' }} />
-                      <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#27C93F' }} />
-                    </div>
-                    <span style={{ fontFamily: TOKENS.fontMono, fontSize: 16, color: '#D4D4D8', fontWeight: 600 }}>
-                      shop.example.com/login
-                    </span>
-                    <span style={{ width: 32 }} />
-                  </div>
-
-                  {/* White Login Form Body */}
-                  <div style={{ padding: '28px 40px 32px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    <div style={{ fontSize: 32, fontWeight: 900, color: '#18181B', textAlign: 'center', marginBottom: 4 }}>
-                      會員登入
-                    </div>
-                    <div
-                      style={{
-                        padding: '12px 16px',
-                        borderRadius: 8,
-                        background: '#FFFFFF',
-                        border: '1.5px solid #D4D4D8',
-                        fontSize: 20,
-                        color: '#71717A',
-                        fontWeight: 600,
-                      }}
-                    >
-                      電子郵件
-                    </div>
-                    <div
-                      style={{
-                        padding: '12px 16px',
-                        borderRadius: 8,
-                        background: '#FFFFFF',
-                        border: '1.5px solid #D4D4D8',
-                        fontSize: 20,
-                        color: '#71717A',
-                        fontWeight: 600,
-                      }}
-                    >
-                      密碼
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 4,
-                        padding: '13px 0',
-                        borderRadius: 8,
-                        background: TOKENS.amber,
-                        color: '#141416',
-                        fontSize: 23,
-                        fontWeight: 900,
-                        textAlign: 'center',
-                      }}
-                    >
-                      登入
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    padding: '10px 28px',
-                    borderRadius: 999,
-                    background: 'rgba(16, 185, 129, 0.14)',
-                    border: `2px solid ${TOKENS.emerald}`,
-                    color: TOKENS.emerald,
-                    fontSize: 24,
-                    fontWeight: 800,
-                  }}
-                >
-                  ✓ 當場就能打開瀏覽器實測驗收
-                </div>
-              </div>
-            );
-          }
-
-          const colStartF = (col.stepClause ?? 0) <= 1 && cIdx === 0 ? clause1F : getBeatFrame(scene, col.stepClause ?? 0, fps);
-          const colP = spring({ frame: frame - colStartF, fps, config: SPRING_SNAPPY });
+          const colClause = col.stepClause ?? cIdx;
+          const colStartF = colClause === 0 ? 2 : getBeatFrame(scene, Math.min(colClause, Math.max(0, scene.clauses.length - 1)), fps);
+          const colP = settle(spring({ frame: frame - colStartF, fps, config: SPRING_SNAPPY }));
           const headerVisible = frame >= colStartF - 2;
-          const footerStartF = col.footerClause !== undefined ? getBeatFrame(scene, col.footerClause, fps) : 9999;
-          const isVerifiedGreen = (cIdx === 0 && frame >= clause3F - 2) || (cIdx === 1 && frame >= footerStartF + 16);
-          const verifyP = spring({ frame: frame - (cIdx === 0 ? clause3F : footerStartF + 16), fps, config: SPRING_SNAPPY });
+          const defaultVerifyClause = Math.max(1, scene.clauses.length - 1);
+          const verifyClause = col.footerClause !== undefined ? col.footerClause : defaultVerifyClause;
+          const verifyStartF = getBeatFrame(scene, Math.min(verifyClause, Math.max(0, scene.clauses.length - 1)), fps);
+          const isVerifiedGreen = frame >= verifyStartF - 2;
+          const verifyP = settle(spring({ frame: frame - verifyStartF, fps, config: SPRING_SNAPPY }));
 
           return (
             <div
@@ -2274,7 +2454,7 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
               style={{
                 position: 'relative',
                 width: 470,
-                height: 500,
+                minHeight: 500,
                 background: '#27272B',
                 border: `2.5px solid ${
                   isVerifiedGreen
@@ -2288,12 +2468,12 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'space-between',
+                gap: 20,
                 boxShadow: isVerifiedGreen
                   ? '0 0 38px rgba(16, 185, 129, 0.25), 0 24px 60px rgba(0,0,0,0.45)'
                   : '0 24px 60px rgba(0,0,0,0.45)',
               }}
             >
-              {/* Floating Top-Right Emerald Checkmark Circle */}
               {isVerifiedGreen && (
                 <div
                   style={{
@@ -2305,7 +2485,7 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                     borderRadius: '50%',
                     background: TOKENS.emerald,
                     color: '#0D1F17',
-                    fontSize: 28,
+                    fontSize: 26,
                     fontWeight: 900,
                     display: 'flex',
                     alignItems: 'center',
@@ -2318,7 +2498,6 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                 </div>
               )}
 
-              {/* Top Column Title */}
               <div
                 style={{
                   display: 'flex',
@@ -2348,14 +2527,13 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                 <span style={{ fontSize: 32, fontWeight: 800, color: TOKENS.ink }}>{col.title}</span>
               </div>
 
-              {/* Bottom-Up Brick-by-Brick Stacked Architecture Blocks (1 Individual Item Lit Per Beat + Smooth Focus) */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 'auto' }}>
                 {col.layers.map((ly, lIdx) => {
                   const lyClause = ly.stepClause ?? 0;
-                  const lyF = lyClause === 0 ? 4 : getBeatFrame(scene, Math.min(lyClause, scene.clauses.length - 1), fps);
+                  const lyF = lyClause === 0 ? 4 : getBeatFrame(scene, Math.min(lyClause, Math.max(0, scene.clauses.length - 1)), fps);
                   const lp = settle(spring({ frame: frame - lyF, fps, config: SPRING_SILKY }));
                   const focusW = getSmoothClauseValue(scene, frame, fps, (c) => (c === lyClause ? 1 : 0));
-                  const shownW = getSmoothClauseValue(scene, frame, fps, (c) => (c >= lyClause ? (c === lyClause ? 1 : 0.78) : 0.08));
+                  const shownW = getSmoothClauseValue(scene, frame, fps, (c) => (c >= lyClause ? (c === lyClause ? 1 : 0.82) : 0.08));
                   const isShown = frame >= lyF - 2;
                   const cStyle = layerColorMap[ly.color || 'blue'];
                   const liftY = isShown ? interpolate(lp, [0, 1], [24, -4 * focusW]) : 22;
@@ -2382,9 +2560,9 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                             : '0 10px 26px rgba(0,0,0,0.28)',
                       }}
                     >
-                      <span style={{ fontSize: 25, fontWeight: 900, color: cStyle.text, textAlign: 'center' }}>{ly.label}</span>
+                      <span style={{ fontSize: 25, fontWeight: 900, color: cStyle.text, textAlign: 'center', textWrap: 'balance' as any }}>{ly.label}</span>
                       {ly.sub && (
-                        <span style={{ fontFamily: TOKENS.fontMono, fontSize: 16, fontWeight: 700, color: cStyle.text, opacity: 0.9, textAlign: 'center' }}>
+                        <span style={{ fontFamily: TOKENS.fontMono, fontSize: 16, fontWeight: 700, color: (cStyle as any).sub || cStyle.text, opacity: 0.92, textAlign: 'center' }}>
                           {ly.sub}
                         </span>
                       )}
@@ -2392,6 +2570,24 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                   );
                 })}
               </div>
+
+              {col.footerBadge && isVerifiedGreen && (
+                <div
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 999,
+                    background: TOKENS.emeraldSoft,
+                    border: `1.5px solid ${TOKENS.emeraldBorder}`,
+                    color: TOKENS.emeraldMint,
+                    fontSize: 18,
+                    fontWeight: 800,
+                    textAlign: 'center',
+                    opacity: verifyP,
+                  }}
+                >
+                  {col.footerBadge}
+                </div>
+              )}
             </div>
           );
         })}
@@ -2400,130 +2596,15 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
   );
 };
 
-// 13. traffic_gate_box — "TDD = 防作弊機制" Traffic Light & "好架構 = 深模組" Encapsulation Canvas
+// 13. traffic_gate_box — Invariant Rule Lock Card + Red-to-Green Verification Gate
 const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const mode = d.mode || 'tdd_lights';
-
-  if (mode === 'deep_module') {
-    const step2F = getBeatFrame(scene, d.gateClause ?? 1, fps);
-    const step3F = getBeatFrame(scene, d.innerClause ?? 2, fps);
-    const p1 = spring({ frame, fps, config: SPRING_SNAPPY });
-    const p2 = spring({ frame: frame - step2F, fps, config: SPRING_SNAPPY });
-    const p3 = spring({ frame: frame - step3F, fps, config: SPRING_SNAPPY });
-    const rooms: string[] = Array.isArray(d.rooms)
-      ? d.rooms
-      : ['計算折扣', '驗證信用卡', '建立訂單', '扣除庫存', '寄信通知'];
-
-    return (
-      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 18,
-            transform: 'translateY(22px)',
-          }}
-        >
-          {/* Main Caller Box */}
-          <div
-            style={{
-              padding: '14px 44px',
-              borderRadius: 14,
-              background: '#2E2E33',
-              border: `2px solid ${TOKENS.border}`,
-              fontSize: 28,
-              fontWeight: 800,
-              color: TOKENS.ink,
-              opacity: p1,
-            }}
-          >
-            {d.callerLabel || '💻 主程式 (Main App)'}
-          </div>
-
-          {/* Arrow Down */}
-          <div style={{ fontSize: 32, color: TOKENS.emerald, fontWeight: 900, opacity: p2 }}>↓</div>
-
-          {/* Deep Module Encapsulated Boundary */}
-          <div
-            style={{
-              width: 1320,
-              background: 'rgba(16, 185, 129, 0.07)',
-              border: `2.5px solid ${TOKENS.emerald}`,
-              borderRadius: 22,
-              padding: '28px 36px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 24,
-              boxShadow: '0 28px 70px rgba(0,0,0,0.48)',
-              opacity: p2,
-              transform: `scale(${interpolate(p2, [0, 1], [0.95, 1])})`,
-            }}
-          >
-            {/* Single Simple Door */}
-            <div
-              style={{
-                padding: '12px 36px',
-                borderRadius: 12,
-                background: '#162922',
-                border: `2px solid ${TOKENS.emerald}`,
-                fontFamily: TOKENS.fontMono,
-                fontSize: 30,
-                fontWeight: 800,
-                color: TOKENS.emerald,
-              }}
-            >
-              {d.doorFunction || '🚪 processCheckout()'}
-            </div>
-
-            {/* 5 Hidden Inner Rooms with Left-to-Right Staggered Cascade */}
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'row',
-                gap: 18,
-              }}
-            >
-              {rooms.map((rm, idx) => {
-                const rmP = settle(spring({ frame: frame - (step3F + idx * 5), fps, config: SPRING_SILKY }));
-                return (
-                  <div
-                    key={idx}
-                    style={{
-                      width: 220,
-                      padding: '22px 16px',
-                      borderRadius: 14,
-                      background: '#23272A',
-                      border: `1.5px solid rgba(52, 211, 153, ${(0.22 + 0.28 * rmP).toFixed(2)})`,
-                      fontSize: 25,
-                      fontWeight: 800,
-                      color: TOKENS.ink,
-                      textAlign: 'center',
-                      opacity: rmP,
-                      transform: rmP === 1 ? 'none' : `translate3d(0, ${interpolate(rmP, [0, 1], [18, 0]).toFixed(2)}px, 0)`,
-                      boxShadow: rmP > 0.6 ? '0 10px 24px rgba(0,0,0,0.32)' : 'none',
-                    }}
-                  >
-                    {rm}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{ fontSize: 24, fontWeight: 800, color: TOKENS.emerald, opacity: p3 }}>
-              {d.bottomCaption || '✓ 對外只有一扇極簡大門，對內隱藏所有複雜細節（AI 零迷路）'}
-            </div>
-          </div>
-        </div>
-      </AbsoluteFill>
-    );
+  if (d.mode === 'deep_module') {
+    return <PrimitiveDeepModuleBox scene={scene} />;
   }
 
-  // Default: "tdd_lights" mode (Replicating grill_07_55.jpg 1:1!)
   const redF = getBeatFrame(scene, d.redClause ?? 1, fps);
   const greenF = getBeatFrame(scene, d.greenClause ?? 2, fps);
   const leftP = spring({ frame, fps, config: SPRING_SNAPPY });
@@ -2536,7 +2617,6 @@ const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) =>
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 34, transform: 'translateY(22px)' }}>
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 56 }}>
-          {/* Left Locked Rule Card */}
           <div
             style={{
               width: 680,
@@ -2553,17 +2633,16 @@ const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) =>
             }}
           >
             <div style={{ fontSize: 32, fontWeight: 800, color: TOKENS.inkSecondary }}>
-              🔒 {d.lockTitle || '先把測試死規矩定死'}
+              {d.lockTitle || '先把測試死規矩定死'}
             </div>
             <div style={{ fontFamily: TOKENS.fontMono, fontSize: 44, fontWeight: 900, color: TOKENS.ink }}>
               {d.ruleLeft || '滿 $1,000'} <span style={{ color: TOKENS.amber }}>→ {d.ruleRight || '只能 -$100'}</span>
             </div>
             <div style={{ fontSize: 22, fontWeight: 700, color: TOKENS.coral, opacity: isRedLit ? 1 : 0.35 }}>
-              {d.lockNote || '此時算錢程式還沒寫 → 測試一跑必定失敗亮紅燈'}
+              {d.lockNote || '未達驗收條件前直接攔截，禁止帶病放行'}
             </div>
           </div>
 
-          {/* Right Traffic Light Box */}
           <div
             style={{
               width: 520,
@@ -2577,7 +2656,6 @@ const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) =>
               boxShadow: '0 24px 60px rgba(0,0,0,0.48)',
             }}
           >
-            {/* Red Light Row */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 24, opacity: isRedLit ? 1 : 0.3 }}>
               <div
                 style={{
@@ -2598,12 +2676,11 @@ const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) =>
                 ✗
               </div>
               <div>
-                <div style={{ fontSize: 36, fontWeight: 900, color: TOKENS.coral }}>測試失敗</div>
-                <div style={{ fontSize: 23, fontWeight: 700, color: TOKENS.inkSecondary }}>紅燈：先確認規則鎖死</div>
+                <div style={{ fontSize: 36, fontWeight: 900, color: TOKENS.coral }}>{d.redTitle || '測試失敗'}</div>
+                <div style={{ fontSize: 23, fontWeight: 700, color: TOKENS.inkSecondary }}>{d.redSub || '紅燈：先確認規則鎖死'}</div>
               </div>
             </div>
 
-            {/* Green Light Row */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 24, opacity: isGreenLit ? 1 : 0.28 }}>
               <div
                 style={{
@@ -2624,14 +2701,13 @@ const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) =>
                 ✓
               </div>
               <div>
-                <div style={{ fontSize: 36, fontWeight: 900, color: TOKENS.emerald }}>測試通過</div>
-                <div style={{ fontSize: 23, fontWeight: 700, color: TOKENS.ink }}>綠燈：准許寫程式直到過關</div>
+                <div style={{ fontSize: 36, fontWeight: 900, color: TOKENS.emerald }}>{d.greenTitle || '測試通過'}</div>
+                <div style={{ fontSize: 23, fontWeight: 700, color: TOKENS.ink }}>{d.greenSub || '綠燈：符合標準准許放行'}</div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Bottom Progress & Sequence Pill */}
         <div
           style={{
             width: 1256,
@@ -2662,7 +2738,162 @@ const PrimitiveTrafficGateBox: React.FC<{ scene: StudioScene }> = ({ scene }) =>
               color: TOKENS.ink,
             }}
           >
-            先寫測試 <span style={{ color: TOKENS.amber }}>→</span> 再寫程式（徹底鎖死 AI 作弊空間）
+            {d.bottomCaption || '先鎖定驗收底線 → 再執行實作交付'}
+          </div>
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// 14. deep_module_box — Dedicated Single-Door Facade Encapsulation Architecture Diagram
+const PrimitiveDeepModuleBox: React.FC<{ scene: StudioScene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.data || {};
+  const step2F = getBeatFrame(scene, d.gateClause ?? 1, fps);
+  const step3F = getBeatFrame(scene, d.innerClause ?? 2, fps);
+  const p1 = spring({ frame, fps, config: SPRING_SNAPPY });
+  const p2 = spring({ frame: frame - step2F, fps, config: SPRING_SNAPPY });
+  const p3 = spring({ frame: frame - step3F, fps, config: SPRING_SNAPPY });
+  const rooms: string[] = Array.isArray(d.rooms)
+    ? d.rooms
+    : ['計算折扣', '驗證信用卡', '建立訂單', '扣除庫存', '寄信通知'];
+
+  return (
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 18,
+          transform: 'translateY(22px)',
+        }}
+      >
+        <div
+          style={{
+            padding: '14px 44px',
+            borderRadius: 14,
+            background: '#2E2E33',
+            border: `2px solid ${TOKENS.border}`,
+            fontSize: 28,
+            fontWeight: 800,
+            color: TOKENS.ink,
+            opacity: p1,
+          }}
+        >
+          {d.callerLabel || '主控調用層 (Main Controller)'}
+        </div>
+
+        <div style={{ fontSize: 32, color: TOKENS.emerald, fontWeight: 900, opacity: p2 }}>↓</div>
+
+        <div
+          style={{
+            width: 1320,
+            background: 'rgba(16, 185, 129, 0.07)',
+            border: `2.5px solid ${TOKENS.emerald}`,
+            borderRadius: 22,
+            padding: '28px 36px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 24,
+            boxShadow: '0 28px 70px rgba(0,0,0,0.48)',
+            opacity: p2,
+            transform: `scale(${interpolate(p2, [0, 1], [0.95, 1])})`,
+          }}
+        >
+          <div
+            style={{
+              padding: '12px 36px',
+              borderRadius: 12,
+              background: '#162922',
+              border: `2px solid ${TOKENS.emerald}`,
+              fontFamily: TOKENS.fontMono,
+              fontSize: 30,
+              fontWeight: 800,
+              color: TOKENS.emerald,
+            }}
+          >
+            {d.doorFunction || 'processCheckout()'}
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'row',
+              gap: 16,
+              flexWrap: 'nowrap',
+              justifyContent: 'center',
+            }}
+          >
+            {(rooms as Array<string | { title: string; sub?: string }>).map((rm, idx) => {
+              const rmP = settle(spring({ frame: frame - (step3F + idx * 3), fps, config: SPRING_SNAPPY }));
+              let mainLabel = typeof rm === 'string' ? rm : rm.title;
+              let subLabel = typeof rm === 'string' ? undefined : rm.sub;
+              if (typeof rm === 'string' && rm.includes(' · ')) {
+                const [p1Str, ...rest] = rm.split(' · ');
+                mainLabel = p1Str.trim();
+                subLabel = rest.join(' · ').trim();
+              }
+              const cardW = Math.min(240, Math.floor((1240 - (rooms.length - 1) * 16) / Math.max(1, rooms.length)));
+              const titleSize = mainLabel.length > 10 ? 20 : mainLabel.length > 7 ? 22 : 26;
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    width: cardW,
+                    minHeight: 106,
+                    padding: '20px 14px',
+                    borderRadius: 16,
+                    background: '#23272A',
+                    border: `1.5px solid rgba(52, 211, 153, ${(0.26 + 0.30 * rmP).toFixed(2)})`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    textAlign: 'center',
+                    opacity: rmP,
+                    transform: rmP === 1 ? 'none' : `translate3d(0, ${interpolate(rmP, [0, 1], [18, 0]).toFixed(2)}px, 0)`,
+                    boxShadow: rmP > 0.6 ? '0 10px 24px rgba(0,0,0,0.32)' : 'none',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontFamily: /^[A-Za-z0-9_.\- ]+$/.test(mainLabel) ? TOKENS.fontMono : TOKENS.fontSans,
+                      fontSize: titleSize,
+                      fontWeight: 800,
+                      color: TOKENS.ink,
+                      whiteSpace: mainLabel.length <= 13 ? 'nowrap' : 'normal',
+                      textWrap: 'balance' as any,
+                    }}
+                  >
+                    {mainLabel}
+                  </div>
+                  {subLabel && (
+                    <span
+                      style={{
+                        padding: '3px 12px',
+                        borderRadius: 999,
+                        background: TOKENS.emeraldSoft,
+                        color: TOKENS.emeraldMint,
+                        fontSize: 18,
+                        fontWeight: 800,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {subLabel}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ fontSize: 24, fontWeight: 800, color: TOKENS.emerald, opacity: p3 }}>
+            {d.bottomCaption || '✓ 對外暴露單一極簡入口，對內隱藏所有複雜細節'}
           </div>
         </div>
       </div>
@@ -2930,10 +3161,12 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
           </div>
         )}
 
-        {zones.slice(0, 3).map((zn, idx) => {
+        {zones.slice(0, 3).map((zn: any, idx) => {
           const zStartF = (zn.stepClause ?? idx) === 0 ? 2 : getBeatFrame(scene, zn.stepClause ?? idx, fps);
           const isLit = idx === activeZoneIdx;
           const isVisited = frame >= zStartF - 2;
+          const zItems: string[] = Array.isArray(zn.items) ? zn.items : [];
+          const isMinimal = zItems.length <= 2 && zItems.every((s) => String(s).length <= 14);
 
           return (
             <div
@@ -2942,21 +3175,22 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
                 position: 'relative',
                 background: isLit ? '#292622' : '#222225',
                 border: `2.5px solid ${isLit ? TOKENS.amber : isVisited ? 'rgba(254,138,0,0.28)' : TOKENS.border}`,
-                borderRadius: 16,
-                padding: '26px 24px',
+                borderRadius: 18,
+                padding: '30px 28px',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 16,
-                opacity: isLit ? 1 : isVisited ? 0.42 : 0.22,
+                justifyContent: isMinimal ? 'space-between' : 'flex-start',
+                gap: 18,
+                opacity: isLit ? 1 : isVisited ? 0.44 : 0.22,
                 transform: isLit ? 'translate3d(0, -4px, 0)' : 'none',
                 boxShadow: isLit ? '0 0 36px rgba(254, 138, 0, 0.22)' : 'none',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div
                   style={{
-                    width: 44,
-                    height: 44,
+                    width: 46,
+                    height: 46,
                     borderRadius: '50%',
                     background: TOKENS.amber,
                     color: '#141416',
@@ -2972,23 +3206,54 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
                   {zn.badge || idx + 1}
                 </div>
                 <div>
-                  <div style={{ fontSize: 26, fontWeight: 900, color: TOKENS.ink }}>{zn.title}</div>
-                  <div style={{ fontSize: 18, fontWeight: 600, color: TOKENS.amber }}>{zn.subtitle}</div>
+                  <div style={{ fontSize: 30, fontWeight: 900, color: TOKENS.ink, lineHeight: 1.2, textWrap: 'balance' as any }}>{zn.title}</div>
+                  {zn.subtitle && (
+                    <div style={{ fontFamily: TOKENS.fontMono, fontSize: 18, fontWeight: 700, color: TOKENS.amber, marginTop: 4 }}>
+                      {zn.subtitle}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 10 }}>
-                {(zn.items || []).map((it, iIdx) => (
+              {zn.heroValue && (
+                <div
+                  style={{
+                    padding: '22px 20px',
+                    borderRadius: 16,
+                    background: 'rgba(0, 0, 0, 0.24)',
+                    border: `1.5px solid ${isLit ? TOKENS.amberBorder : 'rgba(255,255,255,0.06)'}`,
+                    textAlign: 'center',
+                  }}
+                >
+                  <div style={{ fontFamily: TOKENS.fontMono, fontSize: 46, fontWeight: 900, color: isLit ? TOKENS.amber : TOKENS.ink, lineHeight: 1.1 }}>
+                    {zn.heroValue}
+                  </div>
+                  {zn.heroLabel && (
+                    <div style={{ fontSize: 19, fontWeight: 700, color: TOKENS.inkSecondary, marginTop: 6 }}>{zn.heroLabel}</div>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: zn.heroValue ? 0 : 12 }}>
+                {zItems.map((it, iIdx) => (
                   <div
                     key={iIdx}
                     style={{
-                      padding: '14px 16px',
-                      borderRadius: 12,
-                      background: isLit && iIdx === 0 ? TOKENS.amberSoft : 'rgba(255,255,255,0.035)',
-                      border: `1px solid ${isLit && iIdx === 0 ? TOKENS.amberBorder : 'rgba(255,255,255,0.06)'}`,
-                      fontSize: 21,
-                      fontWeight: 700,
-                      color: TOKENS.ink,
+                      padding: isMinimal ? '18px 20px' : '14px 18px',
+                      borderRadius: 14,
+                      background: isLit && iIdx === zItems.length - 1 ? TOKENS.emeraldSoft : isLit && iIdx === 0 ? TOKENS.amberSoft : 'rgba(255,255,255,0.035)',
+                      border: `1.5px solid ${
+                        isLit && iIdx === zItems.length - 1
+                          ? TOKENS.emeraldBorder
+                          : isLit && iIdx === 0
+                          ? TOKENS.amberBorder
+                          : 'rgba(255,255,255,0.07)'
+                      }`,
+                      fontSize: isMinimal ? 24 : 21,
+                      fontWeight: 800,
+                      color: isLit && iIdx === zItems.length - 1 ? TOKENS.emeraldMint : TOKENS.ink,
+                      textAlign: isMinimal ? 'center' : 'left',
+                      textWrap: 'balance' as any,
                     }}
                   >
                     {it}
@@ -3003,286 +3268,129 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
   );
 };
 
-// 17. org_tree_radiate — High-Whitespace Frameless 1-to-Many Hub Routing vs Direct-Fanout Fatigue OR Collision-Free Radial Mindmap
+// 17. org_tree_radiate — Collision-Free Elliptical Radial Coupling / Mindmap Burst
 const PrimitiveOrgTreeRadiate: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const mode = d.mode || 'hierarchy_compare';
-
-  if (mode === 'radial_mindmap') {
-    const spokes: string[] = Array.isArray(d.spokes)
-      ? d.spokes
-      : ['Card.tsx', 'Nav.tsx', 'Form.tsx', 'Modal.tsx', 'Input.tsx', 'utils.ts', 'config.ts', 'styles.ts', 'api.ts', 'hooks.ts'];
-    const enterP = spring({ frame, fps, config: SPRING_SNAPPY });
-
-    return (
-      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <div style={{ position: 'relative', width: 1400, height: 600, transform: 'translateY(22px)' }}>
-          <svg width={1400} height={600} style={{ position: 'absolute', inset: 0 }}>
-            {spokes.map((_, idx) => {
-              const angle = (idx / spokes.length) * Math.PI * 2 - Math.PI / 2;
-              const rx = 470;
-              const ry = 215;
-              const x2 = 700 + Math.cos(angle) * rx;
-              const y2 = 300 + Math.sin(angle) * ry;
-              const sp = spring({ frame: frame - idx * 3, fps, config: SPRING_SNAPPY });
-              return (
-                <line
-                  key={idx}
-                  x1={700}
-                  y1={300}
-                  x2={700 + (x2 - 700) * sp}
-                  y2={300 + (y2 - 300) * sp}
-                  stroke={TOKENS.coral}
-                  strokeWidth={2.5}
-                  strokeOpacity={0.65}
-                />
-              );
-            })}
-          </svg>
-
-          {spokes.map((label, idx) => {
-            const angle = (idx / spokes.length) * Math.PI * 2 - Math.PI / 2;
-            const x = 700 + Math.cos(angle) * 470;
-            const y = 300 + Math.sin(angle) * 215;
-            const sp = spring({ frame: frame - idx * 3, fps, config: SPRING_SNAPPY });
-            return (
-              <div
-                key={idx}
-                style={{
-                  position: 'absolute',
-                  left: x - 95,
-                  top: y - 32,
-                  width: 190,
-                  height: 64,
-                  borderRadius: 12,
-                  background: TOKENS.card,
-                  border: `1.5px solid ${TOKENS.border}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  fontFamily: TOKENS.fontMono,
-                  fontSize: 21,
-                  fontWeight: 700,
-                  color: TOKENS.ink,
-                  opacity: sp,
-                  transform: `scale(${interpolate(sp, [0, 1], [0.8, 1])})`,
-                  boxShadow: '0 10px 24px rgba(0,0,0,0.4)',
-                }}
-              >
-                <span>📄</span>
-                <span>{label}</span>
-              </div>
-            );
-          })}
-
-          <div
-            style={{
-              position: 'absolute',
-              left: 700 - 150,
-              top: 300 - 54,
-              width: 300,
-              height: 108,
-              borderRadius: 18,
-              background: TOKENS.amber,
-              color: '#141416',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 36,
-              fontWeight: 900,
-              boxShadow: '0 0 45px rgba(254, 138, 0, 0.45)',
-              transform: `scale(${enterP})`,
-            }}
-          >
-            {d.centerTitle || '改動單一需求'}
-          </div>
-        </div>
-      </AbsoluteFill>
-    );
-  }
-
-  // Frameless High-Whitespace Hierarchy Compare (Left: Direct 1-to-5 Fanout Fatigue vs Right: Clean Hub Layer)
-  const rightF = getBeatFrame(scene, d.rightClause ?? 1, fps, 0.45);
-  const leftP = spring({ frame, fps, config: SPRING_SNAPPY });
-  const rightP = spring({ frame: frame - rightF, fps, config: SPRING_SNAPPY });
-  const isRightActive = frame >= rightF - 2;
-  const leafNodes: string[] = Array.isArray(d.leafNodes || d.subBots)
-    ? (d.leafNodes || d.subBots)
-    : ['模組 A', '模組 B', '模組 C'];
-  const hubLabel = d.hubTitle || d.chiefTitle || '統一調度中樞';
-  const topActor = d.topActor || '決策端';
+  const spokes: string[] = Array.isArray(d.spokes)
+    ? d.spokes
+    : Array.isArray(d.leafNodes)
+    ? d.leafNodes
+    : ['Card.tsx', 'Nav.tsx', 'Form.tsx', 'Modal.tsx', 'Input.tsx', 'utils.ts', 'config.ts', 'styles.ts', 'api.ts', 'hooks.ts'];
+  const enterP = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
+  const lineTone = d.tone === 'emerald' ? TOKENS.emeraldMint : d.tone === 'amber' ? TOKENS.amber : TOKENS.coral;
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div style={{ display: 'flex', gap: 84, alignItems: 'center', transform: 'translateY(18px)' }}>
-        {/* Left: Frameless Direct Fanout (High Cognitive Overhead) */}
+      <div style={{ position: 'relative', width: 1400, height: 600, transform: 'translateY(22px)' }}>
+        <svg width={1400} height={600} style={{ position: 'absolute', inset: 0 }}>
+          {spokes.map((_, idx) => {
+            const angle = (idx / spokes.length) * Math.PI * 2 - Math.PI / 2;
+            const rx = 470;
+            const ry = 215;
+            const x2 = 700 + Math.cos(angle) * rx;
+            const y2 = 300 + Math.sin(angle) * ry;
+            const sp = settle(spring({ frame: frame - idx * 3, fps, config: SPRING_SNAPPY }));
+            return (
+              <line
+                key={idx}
+                x1={700}
+                y1={300}
+                x2={700 + (x2 - 700) * sp}
+                y2={300 + (y2 - 300) * sp}
+                stroke={lineTone}
+                strokeWidth={2.5}
+                strokeOpacity={0.68}
+              />
+            );
+          })}
+        </svg>
+
+        {spokes.map((label, idx) => {
+          const angle = (idx / spokes.length) * Math.PI * 2 - Math.PI / 2;
+          const x = 700 + Math.cos(angle) * 470;
+          const y = 300 + Math.sin(angle) * 215;
+          const sp = settle(spring({ frame: frame - idx * 3, fps, config: SPRING_SNAPPY }));
+          return (
+            <div
+              key={idx}
+              style={{
+                position: 'absolute',
+                left: x - 98,
+                top: y - 32,
+                width: 196,
+                height: 64,
+                borderRadius: 12,
+                background: TOKENS.card,
+                border: `1.5px solid ${TOKENS.border}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+                fontFamily: TOKENS.fontMono,
+                fontSize: 20,
+                fontWeight: 700,
+                color: TOKENS.ink,
+                opacity: sp,
+                transform: `scale(${interpolate(sp, [0, 1], [0.82, 1])})`,
+                boxShadow: '0 10px 24px rgba(0,0,0,0.4)',
+              }}
+            >
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: lineTone, flexShrink: 0 }} />
+              <span>{label}</span>
+            </div>
+          );
+        })}
+
         <div
           style={{
-            width: 610,
-            height: 490,
+            position: 'absolute',
+            left: 700 - 155,
+            top: 300 - 54,
+            width: 310,
+            height: 108,
+            borderRadius: 18,
+            background: TOKENS.amber,
+            color: '#141416',
             display: 'flex',
-            flexDirection: 'column',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            opacity: isRightActive ? 0.34 : leftP,
+            justifyContent: 'center',
+            fontSize: 34,
+            fontWeight: 900,
+            boxShadow: '0 0 45px rgba(254, 138, 0, 0.42)',
+            transform: `scale(${enterP})`,
+            padding: '0 18px',
+            textAlign: 'center',
           }}
         >
-          <div style={{ padding: '8px 24px', borderRadius: 999, background: TOKENS.card, border: `1.5px solid ${TOKENS.coralBorder}`, color: TOKENS.inkSecondary, fontSize: 22, fontWeight: 800 }}>
-            {d.leftBadge || '缺少中間層：每次都要人工判斷找誰'}
-          </div>
-          <div style={{ width: 78, height: 78, borderRadius: '50%', background: TOKENS.card, border: `2px solid ${TOKENS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 900 }}>
-            {topActor}
-          </div>
-          <svg width={520} height={160}>
-            {[55, 155, 260, 365, 465].map((x, i) => (
-              <g key={i}>
-                <line x1={260} y1={8} x2={x} y2={148} stroke="#6E6E74" strokeWidth={2} />
-                <text x={(260 + x) / 2 - 6} y={96} fill={TOKENS.inkMuted} fontSize="18" fontWeight="800">?</text>
-              </g>
-            ))}
-          </svg>
-          <div style={{ display: 'flex', gap: 20 }}>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <div key={n} style={{ width: 78, height: 64, borderRadius: 16, background: TOKENS.card, border: `1.5px solid ${TOKENS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: TOKENS.fontMono, fontSize: 20, fontWeight: 800, color: TOKENS.inkSecondary }}>
-                #{n}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Subtle Center Vertical Divider */}
-        <div style={{ width: 1.5, height: 380, background: TOKENS.border }} />
-
-        {/* Right: Clean Single Hub Layer */}
-        <div
-          style={{
-            width: 640,
-            height: 490,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            opacity: isRightActive ? rightP : 0.16,
-            transform: `scale(${isRightActive ? interpolate(rightP, [0, 1], [0.95, 1]) : 0.95})`,
-          }}
-        >
-          <div style={{ padding: '8px 26px', borderRadius: 999, background: TOKENS.amberSoft, border: `1.5px solid ${TOKENS.amber}`, color: TOKENS.amber, fontSize: 22, fontWeight: 800 }}>
-            {d.rightBadge || '設立中間層：單一入口收斂與自動分發'}
-          </div>
-          <div style={{ width: 72, height: 72, borderRadius: '50%', background: TOKENS.card, border: `2px solid ${TOKENS.amber}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 900 }}>
-            {topActor}
-          </div>
-          <div style={{ width: 2.5, height: 36, background: TOKENS.amber }} />
-          <div style={{ position: 'relative', padding: '14px 36px', borderRadius: 999, background: TOKENS.ink, color: '#141416', fontSize: 26, fontWeight: 900, boxShadow: '0 16px 40px rgba(0,0,0,0.45)' }}>
-            <span style={{ color: TOKENS.amber, marginRight: 8 }}>★</span>
-            {hubLabel}
-          </div>
-          <svg width={480} height={86}>
-            {leafNodes.slice(0, 4).map((_, i, arr) => {
-              const stepX = 400 / Math.max(1, arr.length - 1);
-              const tx = arr.length === 1 ? 240 : 40 + i * stepX;
-              return <line key={i} x1={240} y1={4} x2={tx} y2={80} stroke={TOKENS.emeraldMint} strokeWidth={2.5} />;
-            })}
-          </svg>
-          <div style={{ display: 'flex', gap: 20 }}>
-            {leafNodes.slice(0, 4).map((sb, i) => (
-              <div key={i} style={{ padding: '14px 24px', borderRadius: 16, background: TOKENS.card, border: `1.5px solid ${TOKENS.emeraldBorder}`, fontSize: 22, fontWeight: 800, color: TOKENS.ink }}>
-                {sb}
-              </div>
-            ))}
-          </div>
+          {d.centerTitle || '核心變更節點'}
         </div>
       </div>
     </AbsoluteFill>
   );
 };
 
-// 18. pipeline_timeline_flow — 9-Step Domino Error Contagion Pipeline OR Race Condition Timeline
+// 18. pipeline_timeline_flow — Multi-Step Domino Error Contagion Pipeline
 const PrimitivePipelineTimelineFlow: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const mode = d.mode || 'domino_pipeline';
-
-  if (mode === 'race_timeline') {
-    const attackF = getBeatFrame(scene, d.attackClause ?? 1, fps, 0.42);
-    const fixF = getBeatFrame(scene, d.fixClause ?? 2, fps, 0.72);
-    const p1 = spring({ frame, fps, config: SPRING_SNAPPY });
-    const p2 = spring({ frame: frame - attackF, fps, config: SPRING_SNAPPY });
-    const p3 = spring({ frame: frame - fixF, fps, config: SPRING_SNAPPY });
-    const isFixed = frame >= fixF - 2;
-
-    return (
-      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <div style={{ width: 1420, display: 'flex', flexDirection: 'column', gap: 32, transform: 'translateY(22px)' }}>
-          {/* Horizontal Timeline Track */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#222226', padding: '36px 48px', borderRadius: 22, border: `2px solid ${isFixed ? TOKENS.emerald : TOKENS.border}`, opacity: p1 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-              <div style={{ padding: '12px 26px', borderRadius: 12, background: TOKENS.emeraldSoft, border: `2px solid ${TOKENS.emerald}`, color: TOKENS.emerald, fontSize: 26, fontWeight: 900 }}>
-                ① 查餘額：剩 10 點 ✓
-              </div>
-              <span style={{ fontSize: 19, color: TOKENS.inkSecondary }}>T = 0.00s</span>
-            </div>
-
-            <div style={{ flex: 1, margin: '0 28px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-              <div style={{ padding: '10px 26px', borderRadius: 999, background: isFixed ? TOKENS.emeraldSoft : TOKENS.coralSoft, border: `2px solid ${isFixed ? TOKENS.emerald : TOKENS.coral}`, color: isFixed ? TOKENS.emerald : TOKENS.coral, fontSize: 24, fontWeight: 900 }}>
-                {isFixed ? '🔒 立即預扣凍結 8 點（可用餘額秒變 2 點）' : '⏱ 5.0 秒外部 AI 運算空檔（點數還沒扣！）'}
-              </div>
-              <div style={{ width: '100%', height: 8, background: isFixed ? TOKENS.emerald : TOKENS.coral, borderRadius: 999 }} />
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-              <div style={{ padding: '12px 26px', borderRadius: 12, background: '#2F2F35', border: `2px solid ${TOKENS.border}`, color: TOKENS.ink, fontSize: 26, fontWeight: 900 }}>
-                ③ 運算完成才扣點
-              </div>
-              <span style={{ fontSize: 19, color: TOKENS.inkSecondary }}>T = 5.00s</span>
-            </div>
-          </div>
-
-          {/* Attack vs Defense Bottom Card */}
-          <div style={{ display: 'flex', gap: 28 }}>
-            <div style={{ flex: 1, padding: '26px 32px', borderRadius: 18, background: '#2A2022', border: `2px solid ${TOKENS.coral}`, opacity: frame >= attackF ? p2 : 0.2 }}>
-              <div style={{ fontSize: 28, fontWeight: 900, color: TOKENS.coral, marginBottom: 8 }}>
-                ⚡ 攻擊者腳本：同一毫秒連發 10 個請求
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: TOKENS.inkSecondary }}>
-                10 個請求同時查餘額都看到「剩 10 點」➔ 只付 8 點的錢，白嫖 80 點昂貴算力！
-              </div>
-            </div>
-
-            {isFixed && (
-              <div style={{ flex: 1, padding: '26px 32px', borderRadius: 18, background: '#1B2B24', border: `2px solid ${TOKENS.emerald}`, opacity: p3 }}>
-                <div style={{ fontSize: 28, fontWeight: 900, color: TOKENS.emerald, marginBottom: 8 }}>
-                  ✓ 預扣防禦：像飯店刷卡預授權
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: TOKENS.ink }}>
-                  第 1 個請求進來秒凍 8 點 ➔ 後面 9 個請求看到餘額只剩 2 點當場全部攔截！
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </AbsoluteFill>
-    );
-  }
-
-  // Default: "domino_pipeline" (9-Step Rigid Framework Domino Error Contagion, grid_v2_grill.jpg)
   const steps: string[] = Array.isArray(d.steps)
     ? d.steps
     : ['釐清目標', '寫規格', '寫計畫', '拆任務', '設計架構', '寫測試', '實作程式碼', '審查', '收尾'];
   const failClause = d.failClause ?? 1;
   const failF = getBeatFrame(scene, failClause, fps, 0.45);
   const failStartIdx = d.failStartIndex ?? 1;
+  const boxSize = steps.length > 9 ? Math.max(72, Math.floor(1180 / steps.length)) : 96;
+  const connWidth = steps.length > 9 ? 20 : 36;
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 40, transform: 'translateY(20px)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {steps.map((st, idx) => {
-            const enterP = spring({ frame: frame - idx * 3, fps, config: SPRING_SNAPPY });
+            const enterP = settle(spring({ frame: frame - idx * 3, fps, config: SPRING_SNAPPY }));
             const dominoFrame = failF + Math.max(0, idx - failStartIdx) * 5;
             const isInfected = frame >= failF && idx >= failStartIdx && frame >= dominoFrame;
 
@@ -3291,29 +3399,31 @@ const PrimitivePipelineTimelineFlow: React.FC<{ scene: StudioScene }> = ({ scene
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, opacity: enterP }}>
                   <div
                     style={{
-                      width: 96,
-                      height: 96,
+                      width: boxSize,
+                      height: boxSize,
                       borderRadius: 20,
-                      background: isInfected ? TOKENS.coralSoft : '#2C2C31',
+                      background: isInfected ? TOKENS.coralSoft : TOKENS.card,
                       border: `2.5px solid ${isInfected ? TOKENS.coral : TOKENS.amber}`,
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      boxShadow: isInfected ? '0 0 28px rgba(239, 68, 68, 0.45)' : 'none',
+                      boxShadow: isInfected ? '0 0 28px rgba(224, 85, 73, 0.45)' : 'none',
                     }}
                   >
                     <span style={{ fontFamily: TOKENS.fontMono, fontSize: 28, fontWeight: 900, color: isInfected ? TOKENS.coral : TOKENS.amber }}>
                       {isInfected ? '✗' : idx + 1}
                     </span>
                   </div>
-                  <span style={{ fontSize: 22, fontWeight: 800, color: isInfected ? TOKENS.coral : TOKENS.ink }}>{st}</span>
+                  <span style={{ fontSize: steps.length > 9 ? 19 : 22, fontWeight: 800, color: isInfected ? TOKENS.coral : TOKENS.ink, whiteSpace: 'nowrap' }}>
+                    {st}
+                  </span>
                 </div>
 
                 {idx < steps.length - 1 && (
                   <div
                     style={{
-                      width: 38,
+                      width: connWidth,
                       height: 4,
                       background: frame >= failF + Math.max(0, idx - failStartIdx) * 5 && idx >= failStartIdx ? TOKENS.coral : TOKENS.border,
                       marginBottom: 36,
@@ -3332,12 +3442,12 @@ const PrimitivePipelineTimelineFlow: React.FC<{ scene: StudioScene }> = ({ scene
               borderRadius: 16,
               background: TOKENS.coralSoft,
               border: `2px solid ${TOKENS.coral}`,
-              fontSize: 30,
+              fontSize: 28,
               fontWeight: 900,
               color: TOKENS.coral,
             }}
           >
-            {d.failBanner || '⚠️ 死板長流程的致命傷：前面一步定歪，錯誤順著整條線傳染，整條都得重跑！'}
+            {d.failBanner || '⚠️ 僵化長流程致命傷：前序一步偏差，錯誤順著整條鏈路骨牌式傳染！'}
           </div>
         )}
       </div>
@@ -3345,7 +3455,7 @@ const PrimitivePipelineTimelineFlow: React.FC<{ scene: StudioScene }> = ({ scene
   );
 };
 
-// 19. defense_boundary_flow — Two Arched Doors (AuthN vs AuthZ) OR Trust Boundary Architecture (grid_v4_sec.jpg)
+// 19. defense_boundary_flow — Two Arched Doors (AuthN vs AuthZ) OR Fully Parameterized Trust Boundary Architecture
 const PrimitiveDefenseBoundaryFlow: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -3353,72 +3463,122 @@ const PrimitiveDefenseBoundaryFlow: React.FC<{ scene: StudioScene }> = ({ scene 
   const mode = d.mode || 'two_arches';
 
   if (mode === 'trust_boundary') {
-    const step2F = getBeatFrame(scene, 1, fps, 0.45);
-    const p1 = spring({ frame, fps, config: SPRING_SNAPPY });
-    const p2 = spring({ frame: frame - step2F, fps, config: SPRING_SNAPPY });
+    const step2F = getBeatFrame(scene, d.rightClause ?? 1, fps, 0.45);
+    const p1 = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
+    const p2 = settle(spring({ frame: frame - step2F, fps, config: SPRING_SNAPPY }));
+
+    const rawLeftItems: Array<string | { title: string; detail?: string }> = Array.isArray(d.leftItems)
+      ? d.leftItems
+      : [
+          {
+            title: d.leftCardTitle || '客戶端環境 (Untrusted Client)',
+            detail: d.leftCardDetail || '暴露於外部網路，前端參數與本地狀態隨時可能被竄改或偽造請求',
+          },
+        ];
+    const rawRightItems: Array<string | { title: string; detail?: string }> = Array.isArray(d.rightItems)
+      ? d.rightItems
+      : [
+          { title: '後端服務層 · 獨立重算金額與業務校驗' },
+          { title: '儲存資料層 · 行級權限隔離與原子事務鎖' },
+        ];
 
     return (
       <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 36, transform: 'translateY(22px)' }}>
-          {/* Left Untrusted Browser Zone */}
+          {/* Left Untrusted Zone */}
           <div
             style={{
-              width: 540,
-              height: 460,
+              width: 560,
+              minHeight: 460,
               borderRadius: 22,
-              background: 'rgba(239, 68, 68, 0.06)',
+              background: 'rgba(224, 85, 73, 0.06)',
               border: `2.5px dashed ${TOKENS.coral}`,
-              padding: '32px',
+              padding: '30px 32px',
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'space-between',
+              gap: 20,
               opacity: p1,
             }}
           >
-            <div style={{ fontSize: 28, fontWeight: 900, color: TOKENS.coral }}>⚠️ 外部不可控區（用戶瀏覽器）</div>
-            <div style={{ padding: '22px', borderRadius: 16, background: '#262223', border: `1.5px solid ${TOKENS.coralBorder}` }}>
-              <div style={{ fontSize: 25, fontWeight: 800, color: TOKENS.ink, marginBottom: 8 }}>🌐 前端網頁 (Client Browser)</div>
-              <div style={{ fontSize: 20, color: TOKENS.inkSecondary }}>用戶隨時可打開 F12 竄改扣點數字或偽造請求</div>
+            <div style={{ fontSize: 27, fontWeight: 900, color: TOKENS.coral }}>
+              {d.leftZoneTitle || '✗ 外部不可控區（Untrusted Zone）'}
             </div>
-            <div style={{ padding: '14px 20px', borderRadius: 12, background: TOKENS.coralSoft, color: TOKENS.coral, fontSize: 22, fontWeight: 800, textAlign: 'center' }}>
-              ✗ 絕不能把扣點與權限檢查寫在前端
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {rawLeftItems.slice(0, 3).map((it, idx) => {
+                const title = typeof it === 'string' ? it : it.title;
+                const detail = typeof it === 'string' ? undefined : it.detail;
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      padding: '20px 22px',
+                      borderRadius: 16,
+                      background: '#2B2323',
+                      border: `1.5px solid ${TOKENS.coralBorder}`,
+                    }}
+                  >
+                    <div style={{ fontSize: 23, fontWeight: 800, color: TOKENS.ink, marginBottom: detail ? 8 : 0 }}>{title}</div>
+                    {detail && <div style={{ fontSize: 19, color: TOKENS.inkSecondary, lineHeight: 1.45 }}>{detail}</div>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ padding: '13px 20px', borderRadius: 12, background: TOKENS.coralSoft, color: TOKENS.coral, fontSize: 21, fontWeight: 800, textAlign: 'center' }}>
+              {d.leftFooter || '✗ 嚴禁在此層執行核心計費與權限判定'}
             </div>
           </div>
 
           {/* Center Trust Boundary Vertical Line */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-            <div style={{ padding: '8px 20px', borderRadius: 999, background: TOKENS.amber, color: '#141416', fontSize: 20, fontWeight: 900 }}>
-              信任邊界 Trust Boundary
+            <div style={{ padding: '8px 22px', borderRadius: 999, background: TOKENS.amber, color: '#141416', fontSize: 19, fontWeight: 900, whiteSpace: 'nowrap' }}>
+              {d.boundaryLabel || '信任邊界 Trust Boundary'}
             </div>
             <div style={{ width: 4, height: 340, borderLeft: `4px dashed ${TOKENS.amber}` }} />
           </div>
 
-          {/* Right Trusted Backend Zone */}
+          {/* Right Trusted Zone */}
           <div
             style={{
-              width: 580,
-              height: 460,
+              width: 590,
+              minHeight: 460,
               borderRadius: 22,
-              background: 'rgba(16, 185, 129, 0.06)',
+              background: 'rgba(19, 159, 107, 0.06)',
               border: `2.5px solid ${TOKENS.emerald}`,
-              padding: '32px',
+              padding: '30px 32px',
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'space-between',
-              opacity: p2,
+              gap: 20,
+              opacity: frame >= step2F - 2 ? p2 : 0.22,
+              transform: `translateX(${frame >= step2F - 2 ? interpolate(p2, [0, 1], [22, 0]) : 22}px)`,
             }}
           >
-            <div style={{ fontSize: 28, fontWeight: 900, color: TOKENS.emerald }}>🛡️ 內部安全區（你的雲端主機）</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ padding: '18px 22px', borderRadius: 14, background: '#1E2824', border: `1.5px solid ${TOKENS.emeraldBorder}`, fontSize: 24, fontWeight: 800 }}>
-                🖥️ 後端伺服器（親自重算金額與權限）
-              </div>
-              <div style={{ padding: '18px 22px', borderRadius: 14, background: '#1E2824', border: `1.5px solid ${TOKENS.emeraldBorder}`, fontSize: 24, fontWeight: 800 }}>
-                🗄️ 資料庫底層（RLS 資料列層級隔離）
-              </div>
+            <div style={{ fontSize: 27, fontWeight: 900, color: TOKENS.emeraldMint }}>
+              {d.rightZoneTitle || '✓ 內部受控安全區（Trusted Zone）'}
             </div>
-            <div style={{ padding: '14px 20px', borderRadius: 12, background: TOKENS.emeraldSoft, color: TOKENS.emerald, fontSize: 22, fontWeight: 800, textAlign: 'center' }}>
-              ✓ 外部包裹一律安檢，核心資產自我防衛
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {rawRightItems.slice(0, 3).map((it, idx) => {
+                const title = typeof it === 'string' ? it : it.title;
+                const detail = typeof it === 'string' ? undefined : it.detail;
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      padding: '18px 22px',
+                      borderRadius: 14,
+                      background: '#1E2824',
+                      border: `1.5px solid ${TOKENS.emeraldBorder}`,
+                    }}
+                  >
+                    <div style={{ fontSize: 23, fontWeight: 800, color: TOKENS.ink, marginBottom: detail ? 6 : 0 }}>{title}</div>
+                    {detail && <div style={{ fontSize: 18, color: TOKENS.inkSecondary, lineHeight: 1.4 }}>{detail}</div>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ padding: '13px 20px', borderRadius: 12, background: TOKENS.emeraldSoft, color: TOKENS.emeraldMint, fontSize: 21, fontWeight: 800, textAlign: 'center' }}>
+              {d.rightFooter || '✓ 跨邊界請求強制驗簽，核心資產自我防衛'}
             </div>
           </div>
         </div>
@@ -3776,153 +3936,65 @@ const PrimitiveAcronymTokenSlot: React.FC<{ scene: StudioScene }> = ({ scene }) 
   );
 };
 
-// 22. metaphor_canvas — Architectural Cross-Section Metaphor ("淺模組 = 沒有大門的房子") OR 36-Knob Neural Panel
+// 22. metaphor_canvas — Rotary Weight Parameter Tuning Panel
 const PrimitiveMetaphorCanvas: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const mode = d.mode || 'no_door_house';
-
-  if (mode === 'rotary_knobs') {
-    const cols = 9;
-    const rows = 3;
-    const total = cols * rows;
-    return (
-      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 32, transform: 'translateY(20px)' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 96px)`, gap: 22, padding: '36px 44px', borderRadius: 24, background: '#222226', border: `2px solid ${TOKENS.border}` }}>
-            {Array.from({ length: total }).map((_, idx) => {
-              const baseAngle = ((idx * 47) % 260) - 130;
-              const animAngle = baseAngle + Math.sin(frame / 14 + idx) * 42;
-              return (
-                <div
-                  key={idx}
-                  style={{
-                    width: 82,
-                    height: 82,
-                    borderRadius: '50%',
-                    background: 'radial-gradient(circle at 35% 35%, #3A3A40, #1C1C20)',
-                    border: `2.5px solid ${idx % 4 === 0 ? TOKENS.amber : '#52525B'}`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 8px 20px rgba(0,0,0,0.45)',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 4,
-                      height: 34,
-                      background: idx % 4 === 0 ? TOKENS.amber : TOKENS.ink,
-                      borderRadius: 999,
-                      transformOrigin: 'bottom center',
-                      transform: `translateY(-14px) rotate(${animAngle}deg)`,
-                    }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: TOKENS.amber }}>
-            {d.caption || '數百億個權重參數 = 數百億顆反覆微調角度的旋鈕'}
-          </div>
-        </div>
-      </AbsoluteFill>
-    );
-  }
-
-  // Default: "no_door_house" (Replicating grill_11_45.jpg Cross-Section House without a Front Door!)
-  const enterP = spring({ frame, fps, config: SPRING_SNAPPY });
-  const callout1F = getBeatFrame(scene, 1, fps, 0.38);
-  const callout2F = getBeatFrame(scene, Math.min(2, scene.clauses.length - 1), fps, 0.68);
-  const c1P = spring({ frame: frame - callout1F, fps, config: SPRING_SNAPPY });
-  const c2P = spring({ frame: frame - callout2F, fps, config: SPRING_SNAPPY });
-
-  const rooms = [
-    { name: '🍳 廚房 (計算折扣)', entry: '⚠️ 走左邊爬窗戶進', tone: TOKENS.amber },
-    { name: '🛋️ 客廳 (驗證信用卡)', entry: '⚠️ 從屋頂鑽煙囪進', tone: TOKENS.coral },
-    { name: '🛏️ 臥室 (扣除庫存)', entry: '⚠️ 記住獨立暗號進', tone: TOKENS.amber },
-  ];
+  const cols = Math.max(3, Math.min(10, Number(d.cols ?? 9)));
+  const rows = Math.max(2, Math.min(4, Number(d.rows ?? 3)));
+  const total = cols * rows;
+  const enterP = settle(spring({ frame, fps, config: SPRING_SILKY }));
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 22, transform: 'translateY(24px)', opacity: enterP }}>
-        {/* Warning Pill */}
-        <div style={{ padding: '8px 26px', borderRadius: 999, background: '#332421', border: `1.5px solid ${TOKENS.coral}`, color: TOKENS.amber, fontSize: 23, fontWeight: 800 }}>
-          {d.warningPill || '⚠️ 沒有統一大門：主程式必須死記每個房間的獨立路線（溝通成本極高）'}
-        </div>
-
-        {/* House Cross-Section Structure */}
-        <div style={{ position: 'relative', width: 1120, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          {/* Roof Triangle */}
-          <svg width={1120} height={110} viewBox="0 0 1120 110">
-            <polygon points="560,8 120,108 1000,108" fill="#2A2320" stroke={TOKENS.amber} strokeWidth="3" />
-            <rect x="740" y="18" width="54" height="80" fill="#3D2622" stroke={TOKENS.coral} strokeWidth="2.5" />
-          </svg>
-
-          {/* Rooms Grid */}
-          <div
-            style={{
-              width: 880,
-              background: '#261F1D',
-              border: `3px solid ${TOKENS.amber}`,
-              borderTop: 'none',
-              borderRadius: '0 0 18px 18px',
-              padding: '28px',
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: 20,
-            }}
-          >
-            {rooms.map((rm, idx) => (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 32, transform: 'translateY(20px)', opacity: enterP }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${cols}, 96px)`,
+            gap: 22,
+            padding: '36px 44px',
+            borderRadius: 24,
+            background: '#222226',
+            border: `2px solid ${TOKENS.border}`,
+            boxShadow: '0 26px 64px rgba(0,0,0,0.48)',
+          }}
+        >
+          {Array.from({ length: total }).map((_, idx) => {
+            const baseAngle = ((idx * 47) % 260) - 130;
+            const animAngle = baseAngle + Math.sin(frame / 14 + idx) * 42;
+            return (
               <div
                 key={idx}
                 style={{
-                  background: '#332824',
-                  border: `2px solid ${rm.tone}`,
-                  borderRadius: 14,
-                  padding: '24px 18px',
+                  width: 82,
+                  height: 82,
+                  borderRadius: '50%',
+                  background: 'radial-gradient(circle at 35% 35%, #3A3A40, #1C1C20)',
+                  border: `2.5px solid ${idx % 4 === 0 ? TOKENS.amber : '#52525B'}`,
                   display: 'flex',
-                  flexDirection: 'column',
                   alignItems: 'center',
-                  gap: 16,
+                  justifyContent: 'center',
+                  boxShadow: '0 8px 20px rgba(0,0,0,0.45)',
                 }}
               >
-                <div style={{ fontSize: 25, fontWeight: 900, color: TOKENS.ink }}>{rm.name}</div>
                 <div
                   style={{
-                    padding: '8px 16px',
-                    borderRadius: 10,
-                    background: 'rgba(239, 68, 68, 0.16)',
-                    border: `1.5px solid ${TOKENS.coral}`,
-                    fontSize: 20,
-                    fontWeight: 800,
-                    color: TOKENS.coral,
-                    opacity: idx === 0 ? c1P : c2P,
+                    width: 4,
+                    height: 34,
+                    background: idx % 4 === 0 ? TOKENS.amber : TOKENS.ink,
+                    borderRadius: 999,
+                    transformOrigin: 'bottom center',
+                    transform: `translateY(-14px) rotate(${animAngle}deg)`,
                   }}
-                >
-                  {rm.entry}
-                </div>
+                />
               </div>
-            ))}
-          </div>
-
-          {/* Bottom Blocked Front Door Indicator */}
-          <div
-            style={{
-              marginTop: 18,
-              padding: '12px 34px',
-              borderRadius: 12,
-              background: TOKENS.coralSoft,
-              border: `2px solid ${TOKENS.coral}`,
-              fontSize: 26,
-              fontWeight: 900,
-              color: TOKENS.coral,
-              opacity: c2P,
-            }}
-          >
-            🚫 缺少統一大門（主程式被迫在 5 個房間之間瘋狂跳轉，塞爆 AI Context Window）
-          </div>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: TOKENS.amber }}>
+          {d.caption || '數百億個權重參數 = 數百億顆反覆微調角度的旋鈕'}
         </div>
       </div>
     </AbsoluteFill>
@@ -4081,6 +4153,9 @@ const PrimitiveSynergyPuzzlePair: React.FC<{ scene: StudioScene }> = ({ scene })
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
+  if (d.mode === 'n_piece_mismatch' || d.mode === 'bundler_funnel') {
+    return <SynergyPuzzleExtendedModes scene={scene} />;
+  }
   const rightEnterF = getBeatFrame(scene, 1, fps, 0.32);
   const snapF = getBeatFrame(scene, d.snapClause ?? Math.min(2, scene.clauses.length - 1), fps, 0.65);
 
@@ -4388,52 +4463,198 @@ const PrimitiveConvergentHubBus: React.FC<{ scene: StudioScene }> = ({ scene }) 
   );
 };
 
-// 27. arc_gauge_audit — Dual Semicircular Contrast Gauges OR High-Speed Needle + Document Skeleton Emerald Scan
+// Code-drawn vector icon helper for gauges & stages (zero emoji dependency)
+const GaugeVectorIcon: React.FC<{ kind?: string; color: string; size?: number }> = ({ kind = 'eye', color, size = 38 }) => {
+  const norm = (() => {
+    const k = String(kind || '').trim().toLowerCase();
+    if (k.includes('eye') || k.includes('read') || k.includes('open')) return 'eye';
+    if (k.includes('lock') || k.includes('write') || k.includes('strict')) return 'lock';
+    if (k.includes('shield') || k.includes('guard')) return 'shield';
+    if (k.includes('bolt') || k.includes('speed') || k.includes('fast') || k.includes('zap')) return 'bolt';
+    if (k.includes('chart') || k.includes('bar')) return 'chart';
+    return 'eye';
+  })();
+
+  if (norm === 'lock') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+        <rect x="7" y="16" width="22" height="16" rx="4" stroke={color} strokeWidth="2.8" fill="rgba(224,85,73,0.12)" />
+        <path d="M12 16V11.5C12 8.186 14.686 5.5 18 5.5C21.314 5.5 24 8.186 24 11.5V16" stroke={color} strokeWidth="2.8" strokeLinecap="round" />
+        <circle cx="18" cy="24" r="2.5" fill={color} />
+      </svg>
+    );
+  }
+  if (norm === 'shield') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+        <path d="M18 4.5L29 9V17.5C29 24.8 24.2 30.2 18 32.5C11.8 30.2 7 24.8 7 17.5V9L18 4.5Z" stroke={color} strokeWidth="2.6" fill="rgba(23,183,166,0.12)" />
+        <polyline points="13.2 18.2 16.6 21.6 23.2 14.8" stroke={color} strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (norm === 'bolt') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+        <polygon points="20.5 4 9.5 20 17.5 20 15.5 32 26.5 16 18.5 16 20.5 4" stroke={color} strokeWidth="2.5" strokeLinejoin="round" fill="rgba(254,138,0,0.16)" />
+      </svg>
+    );
+  }
+  if (norm === 'chart') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+        <rect x="6" y="20" width="5.5" height="10" rx="2" fill={color} opacity="0.55" />
+        <rect x="15.2" y="13" width="5.5" height="17" rx="2" fill={color} opacity="0.8" />
+        <rect x="24.5" y="7" width="5.5" height="23" rx="2" fill={color} />
+      </svg>
+    );
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none">
+      <path d="M3.5 18C6.8 11.2 12 7.8 18 7.8C24 7.8 29.2 11.2 32.5 18C29.2 24.8 24 28.2 18 28.2C12 28.2 6.8 24.8 3.5 18Z" stroke={color} strokeWidth="2.6" fill="rgba(23,183,166,0.10)" />
+      <circle cx="18" cy="18" r="5" stroke={color} strokeWidth="2.6" fill={color} fillOpacity="0.28" />
+      <circle cx="18" cy="18" r="2.2" fill={color} />
+    </svg>
+  );
+};
+
+// 27. arc_gauge_audit — Exact 240° Dual Contrast Gauges (Vector Icon + Numeric %) OR High-Speed Scan with Named Audit Items
 const PrimitiveArcGaugeAudit: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
   const mode = d.mode || 'dual_compare';
+  if (mode === 'threshold_tripwire') {
+    return <ArcGaugeThresholdTripwireMode scene={scene} />;
+  }
   const beat2 = getBeatFrame(scene, 1, fps, 0.44);
   const p1 = settle(spring({ frame, fps, config: SPRING_SILKY }));
   const p2 = settle(spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY }));
 
   if (mode === 'speed_scan') {
     const scanStarted = frame >= beat2 - 2;
+    // Exact 240° arc (r=152, cx=200, cy=196, -210° to +30° -> length = 152 * 4π/3 = 636.70)
+    const SCAN_ARC_LEN = 152 * ((4 * Math.PI) / 3);
+    const targetGaugeRatio = Math.max(0.08, Math.min(1, Number(d.gaugePct ?? 94) / 100));
+    const rawScanItems: Array<string | { label: string; meta?: string }> = Array.isArray(d.scanItems)
+      ? d.scanItems
+      : [
+          { label: '輸入結構與欄位完整性校驗', meta: 'SCHEMA OK' },
+          { label: '關鍵邊界條件與空值防護', meta: 'GUARDED' },
+          { label: '端側響應延遲預算達標', meta: '< 180ms' },
+          { label: '權限隔離與敏感欄位脫敏', meta: 'VERIFIED' },
+          { label: '輸出結果一致性與簽章核對', meta: '0 DRIFT' },
+        ];
+    const cleanGaugeVal = String(d.gaugeValue || '0.18s').replace(/^⚡\s*/, '');
+    const activeCol = scanStarted ? TOKENS.emeraldMint : TOKENS.amber;
+    let passedCount = 0;
+    rawScanItems.forEach((_, idx) => {
+      if (frame >= beat2 + idx * 4) passedCount++;
+    });
+
     return (
       <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 90, transform: 'translateY(-10px)' }}>
-          <div style={{ position: 'relative', width: 420, height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width={420} height={380} viewBox="0 0 420 380">
-              <path d="M 70 300 A 165 165 0 1 1 350 300" fill="none" stroke="#3B3B3F" strokeWidth="22" strokeLinecap="round" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 76, transform: 'translateY(-10px)' }}>
+          <div style={{ position: 'relative', width: 400, height: 360, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width={400} height={360} viewBox="0 0 400 360">
+              <path d="M 68.36 272 A 152 152 0 1 1 331.64 272" fill="none" stroke="#3B3B3F" strokeWidth="22" strokeLinecap="round" />
               <path
-                d="M 70 300 A 165 165 0 1 1 350 300"
+                d="M 68.36 272 A 152 152 0 1 1 331.64 272"
                 fill="none"
-                stroke={scanStarted ? TOKENS.emeraldMint : TOKENS.amber}
+                stroke={activeCol}
                 strokeWidth="22"
                 strokeLinecap="round"
-                strokeDasharray={740}
-                strokeDashoffset={740 * (1 - 0.92 * p1)}
+                strokeDasharray={SCAN_ARC_LEN}
+                strokeDashoffset={SCAN_ARC_LEN * (1 - targetGaugeRatio * p1)}
               />
             </svg>
-            <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 48, fontWeight: 900, color: scanStarted ? TOKENS.emeraldMint : TOKENS.amber }}>
-                {d.gaugeValue || '⚡ 極速'}
+            <div style={{ position: 'absolute', top: 112, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <GaugeVectorIcon kind={d.gaugeIcon || 'bolt'} color={activeCol} size={36} />
+              <span style={{ fontFamily: TOKENS.fontMono, fontSize: 52, fontWeight: 900, color: TOKENS.ink, lineHeight: 1.05 }}>
+                {formatRollingMetric(cleanGaugeVal, p1)}
               </span>
-              <span style={{ fontSize: 22, fontWeight: 700, color: TOKENS.inkSecondary }}>{d.gaugeLabel || '毫秒級響應'}</span>
+              <span style={{ fontSize: 21, fontWeight: 700, color: activeCol }}>{d.gaugeLabel || '毫秒級自動掃描'}</span>
             </div>
           </div>
 
-          <div style={{ width: 620, background: TOKENS.card, border: `1.5px solid ${scanStarted ? TOKENS.emeraldBorder : TOKENS.border}`, borderRadius: 20, padding: '32px 36px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-            <div style={{ width: '46%', height: 20, borderRadius: 999, background: '#B8B8BE', marginBottom: 6 }} />
-            {[88, 78, 84, 70, 86, 76, 82].map((wPct, idx) => {
-              const checkF = beat2 + idx * 3;
+          <div
+            style={{
+              width: 720,
+              background: TOKENS.card,
+              border: `1.5px solid ${scanStarted ? TOKENS.emeraldBorder : TOKENS.border}`,
+              borderRadius: 20,
+              padding: '26px 32px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14,
+              boxShadow: '0 24px 60px rgba(0,0,0,0.45)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 10, borderBottom: `1px solid ${TOKENS.border}` }}>
+              <span style={{ fontSize: 22, fontWeight: 800, color: TOKENS.ink }}>
+                {d.scanTitle || '即時自動核驗清單'}
+              </span>
+              <span style={{ fontFamily: TOKENS.fontMono, fontSize: 17, fontWeight: 800, color: scanStarted ? TOKENS.emeraldMint : TOKENS.inkSecondary }}>
+                {passedCount} / {rawScanItems.length} PASSED
+              </span>
+            </div>
+
+            {rawScanItems.slice(0, 6).map((rawIt, idx) => {
+              const label = typeof rawIt === 'string' ? rawIt : rawIt.label;
+              const meta = typeof rawIt === 'string' ? 'PASS' : rawIt.meta || 'PASS';
+              const checkF = beat2 + idx * 4;
               const checked = frame >= checkF;
+              const rowP = settle(spring({ frame: frame - checkF, fps, config: SPRING_SNAPPY }));
               return (
-                <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
-                  <div style={{ width: `${wPct}%`, height: 14, borderRadius: 999, background: checked ? '#9CA3AF' : '#68686E' }} />
-                  <span style={{ width: 26, height: 26, borderRadius: '50%', background: checked ? TOKENS.emeraldMint : '#3F3F45', color: '#081D16', fontSize: 16, fontWeight: 900, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {checked ? '✓' : ''}
+                <div
+                  key={idx}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 16,
+                    padding: '12px 16px',
+                    borderRadius: 12,
+                    background: checked ? 'rgba(23, 183, 166, 0.10)' : '#28282B',
+                    border: `1px solid ${checked ? TOKENS.emeraldBorder : TOKENS.border}`,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <span
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: '50%',
+                        background: checked ? TOKENS.emeraldMint : '#38383D',
+                        border: checked ? 'none' : '1.5px solid #525258',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                        transform: checked ? `scale(${interpolate(rowP, [0, 1], [0.82, 1])})` : 'none',
+                      }}
+                    >
+                      {checked && (
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                          <polyline points="3.2 8.4 6.6 11.8 12.8 4.8" stroke="#081D16" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </span>
+                    <span style={{ fontSize: 21, fontWeight: 700, color: checked ? TOKENS.ink : TOKENS.inkSecondary }}>
+                      {label}
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontFamily: TOKENS.fontMono,
+                      fontSize: 15,
+                      fontWeight: 800,
+                      color: checked ? TOKENS.emeraldMint : TOKENS.inkMuted,
+                      padding: '3px 10px',
+                      borderRadius: 999,
+                      background: checked ? 'rgba(23, 183, 166, 0.14)' : 'rgba(255,255,255,0.03)',
+                    }}
+                  >
+                    {checked ? meta : 'PENDING'}
                   </span>
                 </div>
               );
@@ -4444,38 +4665,65 @@ const PrimitiveArcGaugeAudit: React.FC<{ scene: StudioScene }> = ({ scene }) => 
     );
   }
 
-  const leftPct = Math.max(5, Math.min(100, Number(d.leftPct ?? 86))) / 100;
-  const rightPct = Math.max(5, Math.min(100, Number(d.rightPct ?? 18))) / 100;
+  // Exact 240° symmetric arc (r=140, cx=190, cy=178, from -210° to +30° -> true length = 140 * 4π/3 = 586.4306px)
+  const DUAL_ARC_LEN = 140 * ((4 * Math.PI) / 3);
+  const rawLeftPct = Math.max(1, Math.min(100, Number(d.leftPct ?? 88)));
+  const rawRightPct = Math.max(1, Math.min(100, Number(d.rightPct ?? 15)));
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div style={{ display: 'flex', gap: 110, alignItems: 'center', transform: 'translateY(-10px)' }}>
+      <div style={{ display: 'flex', gap: 116, alignItems: 'center', transform: 'translateY(-6px)' }}>
         {[
-          { title: d.leftTitle || '讀取與檢索', tag: d.leftTag || '寬鬆開放', pct: leftPct * p1, col: TOKENS.emeraldMint, icon: d.leftIcon || '👁️' },
-          { title: d.rightTitle || '寫入與變更', tag: d.rightTag || '嚴格收緊', pct: rightPct * p2, col: TOKENS.coral, icon: d.rightIcon || '🔒' },
-        ].map((g, idx) => (
-          <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, opacity: idx === 0 ? p1 : Math.max(0.25, p2) }}>
-            <div style={{ position: 'relative', width: 380, height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width={380} height={280} viewBox="0 0 380 280">
-                <path d="M 55 240 A 145 145 0 1 1 325 240" fill="none" stroke="#3A3A3E" strokeWidth="20" strokeLinecap="round" />
-                <path
-                  d="M 55 240 A 145 145 0 1 1 325 240"
-                  fill="none"
-                  stroke={g.col}
-                  strokeWidth="20"
-                  strokeLinecap="round"
-                  strokeDasharray={640}
-                  strokeDashoffset={640 * (1 - g.pct)}
-                />
-              </svg>
-              <div style={{ position: 'absolute', top: 115, fontSize: 52 }}>{g.icon}</div>
+          {
+            title: d.leftTitle || '讀取與檢索',
+            tag: d.leftTag || '寬鬆開放',
+            rawPct: rawLeftPct,
+            animP: p1,
+            col: TOKENS.emeraldMint,
+            icon: d.leftIcon || 'eye',
+            valOverride: d.leftValueText,
+          },
+          {
+            title: d.rightTitle || '寫入與變更',
+            tag: d.rightTag || '嚴格收緊',
+            rawPct: rawRightPct,
+            animP: p2,
+            col: TOKENS.coral,
+            icon: d.rightIcon || 'lock',
+            valOverride: d.rightValueText,
+          },
+        ].map((g, idx) => {
+          const curRatio = (g.rawPct / 100) * g.animP;
+          const displayNum = g.valOverride ? formatRollingMetric(String(g.valOverride), g.animP) : `${Math.round(g.rawPct * g.animP)}%`;
+          return (
+            <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, opacity: idx === 0 ? p1 : Math.max(0.25, p2) }}>
+              <div style={{ position: 'relative', width: 380, height: 286, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width={380} height={286} viewBox="0 0 380 286">
+                  <path d="M 68.76 248 A 140 140 0 1 1 311.24 248" fill="none" stroke="#3A3A3E" strokeWidth="20" strokeLinecap="round" />
+                  <path
+                    d="M 68.76 248 A 140 140 0 1 1 311.24 248"
+                    fill="none"
+                    stroke={g.col}
+                    strokeWidth="20"
+                    strokeLinecap="round"
+                    strokeDasharray={DUAL_ARC_LEN}
+                    strokeDashoffset={DUAL_ARC_LEN * (1 - curRatio)}
+                  />
+                </svg>
+                <div style={{ position: 'absolute', top: 92, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                  <GaugeVectorIcon kind={g.icon} color={g.col} size={38} />
+                  <span style={{ fontFamily: TOKENS.fontMono, fontSize: 56, fontWeight: 900, color: TOKENS.ink, lineHeight: 1.05 }}>
+                    {displayNum}
+                  </span>
+                </div>
+              </div>
+              <div style={{ fontSize: 36, fontWeight: 900, color: TOKENS.ink }}>{g.title}</div>
+              <div style={{ padding: '8px 26px', borderRadius: 999, background: TOKENS.card, border: `1.5px solid ${g.col}`, color: g.col, fontSize: 22, fontWeight: 800 }}>
+                {g.tag}
+              </div>
             </div>
-            <div style={{ fontSize: 38, fontWeight: 900, color: TOKENS.ink }}>{g.title}</div>
-            <div style={{ padding: '8px 26px', borderRadius: 999, background: TOKENS.card, border: `1.5px solid ${g.col}`, color: g.col, fontSize: 22, fontWeight: 800 }}>
-              {g.tag}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </AbsoluteFill>
   );
@@ -4610,120 +4858,322 @@ const PrimitiveBinaryDecisionTree: React.FC<{ scene: StudioScene }> = ({ scene }
   );
 };
 
-// 30. spotlight_window_tour — Framed Media Window + Non-Focus Noise Blur Masks + #FE8A00 Spotlight Box & Smooth Camera Zoom
+// 30. spotlight_window_tour — Framed Media Window + Blur Masks + focusBox-Centered Camera Zoom + Optional Side Callout Card
 const PrimitiveSpotlightWindowTour: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
-  const zoomF = getBeatFrame(scene, d.focusClause ?? 1, fps, 0.35);
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
+  const focusSeq: Array<{
+    xPct: number;
+    yPct: number;
+    wPct: number;
+    hPct: number;
+    zoomScale?: number;
+    tag?: string;
+    stepClause?: number;
+  }> = Array.isArray(d.focusSequence) ? d.focusSequence : [];
+  const treeItems: Array<{ depth?: number; name: string; kind?: 'folder' | 'file'; focusStep?: number; sideTag?: string }> =
+    Array.isArray(d.treeItems) ? d.treeItems : [];
+
+  const zoomF = getBeatFrame(scene, d.focusClause ?? (focusSeq.length > 0 ? 0 : 1), fps, 0.35);
+  const callout = d.callout;
+  const calloutClauseIdx = d.calloutClause ?? Math.min(2, Math.max(1, scene.clauses.length - 1));
+  const calloutF = getBeatFrame(scene, calloutClauseIdx, fps, 0.62);
+
   const enterP = settle(spring({ frame, fps, config: SPRING_SILKY }));
   const focusP = settle(spring({ frame: frame - zoomF, fps, config: SPRING_SILKY }));
+  const sideP = callout ? settle(spring({ frame: frame - calloutF, fps, config: SPRING_SNAPPY })) : 0;
+  const calloutPal = tonePalette(callout?.tone || 'amber');
 
-  const focusBox: { xPct: number; yPct: number; wPct: number; hPct: number } = d.focusBox || {
-    xPct: 28,
-    yPct: 34,
-    wPct: 44,
-    hPct: 22,
-  };
+  let activeSeqIdx = 0;
+  focusSeq.forEach((fs, idx) => {
+    const scIdx = fs.stepClause ?? idx;
+    if (activeClause >= scIdx) activeSeqIdx = idx;
+  });
+  const curSeqItem = focusSeq[activeSeqIdx];
+
+  const focusBox: { xPct: number; yPct: number; wPct: number; hPct: number } = curSeqItem ||
+    d.focusBox || {
+      xPct: 28,
+      yPct: 34,
+      wPct: 44,
+      hPct: 22,
+    };
+  const inlineTag = curSeqItem?.tag || d.focusTag;
   const blurZones: Array<{ xPct: number; yPct: number; wPct: number; hPct: number }> = Array.isArray(d.blurZones)
     ? d.blurZones
     : [];
-  const targetScale = Number(d.zoomScale ?? 1.12);
+  const targetScale = Number(curSeqItem?.zoomScale ?? d.zoomScale ?? 1.14);
   const curScale = interpolate(focusP, [0, 1], [1, targetScale]);
+
+  // Zoom precisely around focusBox center with edge-safe clamping so focusBox never clips
+  const originX = focusBox.xPct + focusBox.wPct / 2;
+  const originY = focusBox.yPct + focusBox.hPct / 2;
+  const scaledLeft = originX - (focusBox.wPct / 2) * curScale;
+  const scaledRight = originX + (focusBox.wPct / 2) * curScale;
+  const scaledTop = originY - (focusBox.hPct / 2) * curScale;
+  const scaledBottom = originY + (focusBox.hPct / 2) * curScale;
+  const nudgeX = scaledLeft < 2.5 ? 2.5 - scaledLeft : scaledRight > 97.5 ? 97.5 - scaledRight : 0;
+  const nudgeY = scaledTop < 2.5 ? 2.5 - scaledTop : scaledBottom > 97.5 ? 97.5 - scaledBottom : 0;
+
   const pills: string[] = Array.isArray(d.pills) ? d.pills : [];
+  const winWidth = callout ? 1080 : 1280;
+  const winHeight = callout ? 590 : 640;
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 22, opacity: enterP, transform: 'translateY(-16px)' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 38,
+          opacity: enterP,
+          transform: 'translateY(-16px)',
+        }}
+      >
         <div
           style={{
-            width: 1280,
-            height: 640,
-            borderRadius: 18,
-            overflow: 'hidden',
-            background: '#121214',
-            border: `1.5px solid ${TOKENS.border}`,
-            boxShadow: '0 32px 80px rgba(0,0,0,0.62)',
             display: 'flex',
             flexDirection: 'column',
+            alignItems: 'center',
+            gap: 20,
+            transform: callout ? `translateX(${interpolate(sideP, [0, 1], [234, 0]).toFixed(2)}px)` : 'none',
           }}
         >
-          <div style={{ height: 42, padding: '0 18px', background: '#222327', borderBottom: `1px solid ${TOKENS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#52525B' }} />
-              <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#52525B' }} />
-              <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#52525B' }} />
-            </div>
-            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 17, fontWeight: 700, color: TOKENS.inkSecondary }}>
-              {d.windowTitle || 'app.example.com'}
-            </span>
-            <span style={{ width: 36 }} />
-          </div>
-
-          <div style={{ position: 'relative', flex: 1, overflow: 'hidden', transform: `scale(${curScale.toFixed(4)})` }}>
-            {d.videoFile ? (
-              <OffthreadVideo src={staticFile(d.videoFile)} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : d.imageFile ? (
-              <Img src={staticFile(d.imageFile)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: '#0E0E10' }}>
-                <div style={{ fontSize: 54, fontWeight: 900, color: TOKENS.ink }}>{d.heroText || 'Core Feature Spotlight'}</div>
-                {d.subText && <div style={{ fontSize: 22, color: TOKENS.inkSecondary }}>{d.subText}</div>}
+          <div
+            style={{
+              width: winWidth,
+              height: winHeight,
+              borderRadius: 18,
+              overflow: 'hidden',
+              background: '#141416',
+              border: `1.5px solid ${TOKENS.border}`,
+              boxShadow: '0 32px 80px rgba(0,0,0,0.62)',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <div style={{ height: 42, padding: '0 18px', background: '#222327', borderBottom: `1px solid ${TOKENS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#FF5F56' }} />
+                <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#FFBD2E' }} />
+                <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#27C93F' }} />
               </div>
-            )}
-
-            {blurZones.map((bz, idx) => (
-              <div
-                key={idx}
-                style={{
-                  position: 'absolute',
-                  left: `${bz.xPct}%`,
-                  top: `${bz.yPct}%`,
-                  width: `${bz.wPct}%`,
-                  height: `${bz.hPct}%`,
-                  backdropFilter: 'blur(12px)',
-                  WebkitBackdropFilter: 'blur(12px)',
-                  background: 'rgba(16, 16, 18, 0.56)',
-                  borderRadius: 8,
-                }}
-              />
-            ))}
+              <span style={{ fontFamily: TOKENS.fontMono, fontSize: 17, fontWeight: 700, color: TOKENS.inkSecondary }}>
+                {d.windowTitle || 'app.example.com'}
+              </span>
+              <span style={{ width: 36 }} />
+            </div>
 
             <div
               style={{
-                position: 'absolute',
-                left: `${focusBox.xPct}%`,
-                top: `${focusBox.yPct}%`,
-                width: `${focusBox.wPct}%`,
-                height: `${focusBox.hPct}%`,
-                border: `2.5px solid ${TOKENS.amber}`,
-                borderRadius: 14,
-                boxShadow: '0 0 32px rgba(254, 138, 0, 0.35)',
-                opacity: focusP,
-                pointerEvents: 'none',
+                position: 'relative',
+                flex: 1,
+                overflow: 'hidden',
+                transformOrigin: `${originX.toFixed(2)}% ${originY.toFixed(2)}%`,
+                transform:
+                  curScale === 1
+                    ? 'none'
+                    : `translate3d(${nudgeX.toFixed(2)}%, ${nudgeY.toFixed(2)}%, 0) scale(${curScale.toFixed(4)})`,
               }}
-            />
+            >
+              {d.videoFile ? (
+                <OffthreadVideo src={staticFile(d.videoFile)} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : d.imageFile ? (
+                <Img src={staticFile(d.imageFile)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : treeItems.length > 0 ? (
+                <div style={{ width: '100%', height: '100%', padding: '26px 36px', background: '#1D1E22', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {treeItems.map((ti, idx) => {
+                    const isFocused = (ti.focusStep ?? idx) === Math.min(treeItems.length - 1, activeClause);
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          paddingLeft: (ti.depth ?? 0) * 32,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 14,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            padding: '6px 14px',
+                            borderRadius: 10,
+                            border: `2px solid ${isFocused ? TOKENS.amber : 'transparent'}`,
+                            background: isFocused ? TOKENS.amberSoft : 'transparent',
+                            fontFamily: TOKENS.fontMono,
+                            fontSize: 22,
+                            fontWeight: isFocused ? 800 : 600,
+                            color: isFocused ? TOKENS.ink : TOKENS.inkSecondary,
+                          }}
+                        >
+                          <StudioVectorIcon
+                            name={ti.kind === 'file' ? 'file' : 'folder'}
+                            color={isFocused ? TOKENS.amber : TOKENS.slateLight}
+                            size={22}
+                          />
+                          <span>{ti.name}</span>
+                        </div>
+                        {isFocused && ti.sideTag && (
+                          <span
+                            style={{
+                              padding: '4px 16px',
+                              borderRadius: 999,
+                              background: '#3F2C1B',
+                              border: `1.5px solid ${TOKENS.amber}`,
+                              color: TOKENS.ink,
+                              fontSize: 18,
+                              fontWeight: 800,
+                            }}
+                          >
+                            {ti.sideTag}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: '#1C1C1F' }}>
+                  <div style={{ fontSize: 54, fontWeight: 900, color: TOKENS.ink }}>{d.heroText || 'Core Feature Spotlight'}</div>
+                  {d.subText && <div style={{ fontSize: 22, color: TOKENS.inkSecondary }}>{d.subText}</div>}
+                </div>
+              )}
+
+              {blurZones.map((bz, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    position: 'absolute',
+                    left: `${bz.xPct}%`,
+                    top: `${bz.yPct}%`,
+                    width: `${bz.wPct}%`,
+                    height: `${bz.hPct}%`,
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    background: 'rgba(18, 18, 20, 0.56)',
+                    borderRadius: 8,
+                  }}
+                />
+              ))}
+
+              {treeItems.length === 0 && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: `${focusBox.xPct}%`,
+                    top: `${focusBox.yPct}%`,
+                    width: `${focusBox.wPct}%`,
+                    height: `${focusBox.hPct}%`,
+                    border: `2.5px solid ${TOKENS.amber}`,
+                    borderRadius: 14,
+                    boxShadow: '0 0 32px rgba(254, 138, 0, 0.38)',
+                    opacity: focusP,
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {inlineTag && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: 'calc(100% + 12px)',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        padding: '4px 14px',
+                        borderRadius: 999,
+                        background: '#3F2C1B',
+                        border: `1.5px solid ${TOKENS.amber}`,
+                        color: TOKENS.ink,
+                        fontSize: 16,
+                        fontWeight: 800,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {inlineTag}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
+
+          {d.footnote && (
+            <div style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary }}>
+              {d.footnote}
+            </div>
+          )}
+
+          {pills.length > 0 && (
+            <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {pills.map((pl, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    padding: '10px 28px',
+                    borderRadius: 999,
+                    background: idx === pills.length - 1 ? '#2E261C' : TOKENS.card,
+                    border: `1.5px solid ${idx === pills.length - 1 ? TOKENS.amber : TOKENS.border}`,
+                    fontSize: 22,
+                    fontWeight: 800,
+                    color: TOKENS.ink,
+                  }}
+                >
+                  {pl}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {pills.length > 0 && (
-          <div style={{ display: 'flex', gap: 28 }}>
-            {pills.map((pl, idx) => (
-              <div
-                key={idx}
-                style={{
-                  padding: '12px 32px',
-                  borderRadius: 999,
-                  background: idx === pills.length - 1 ? '#2E261C' : TOKENS.card,
-                  border: `1.5px solid ${idx === pills.length - 1 ? TOKENS.amber : TOKENS.border}`,
-                  fontSize: 24,
-                  fontWeight: 800,
-                  color: TOKENS.ink,
-                }}
-              >
-                {pl}
+        {/* Integrated Non-Overlapping Side Forensic Callout Card (absorbing live_web_showcase capability) */}
+        {callout && (
+          <div
+            style={{
+              width: 430,
+              background: TOKENS.card,
+              border: `1.5px solid ${calloutPal.border}`,
+              borderTop: `4px solid ${calloutPal.fg}`,
+              borderRadius: 18,
+              padding: '28px 30px',
+              boxShadow: '0 26px 60px rgba(0,0,0,0.52)',
+              opacity: sideP,
+              transform: `translateX(${interpolate(sideP, [0, 1], [30, 0]).toFixed(2)}px)`,
+              flexShrink: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+            }}
+          >
+            {callout.badge && (
+              <div style={{ alignSelf: 'flex-start', padding: '4px 14px', borderRadius: 999, background: calloutPal.bg, border: `1px solid ${calloutPal.border}`, color: calloutPal.fg, fontFamily: TOKENS.fontMono, fontSize: 16, fontWeight: 800 }}>
+                {callout.badge}
               </div>
-            ))}
+            )}
+            <div style={{ fontSize: 28, fontWeight: 800, color: TOKENS.ink, lineHeight: 1.3 }}>{callout.title}</div>
+            {callout.bigMetric && (
+              <div style={{ fontFamily: TOKENS.fontMono, fontSize: 50, fontWeight: 900, color: calloutPal.fg, lineHeight: 1.08 }}>
+                {formatRollingMetric(String(callout.bigMetric), sideP)}
+              </div>
+            )}
+            {callout.note && (
+              <div style={{ fontSize: 19, color: TOKENS.inkSecondary, lineHeight: 1.45 }}>{callout.note}</div>
+            )}
+            {Array.isArray(callout.items) && callout.items.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                {callout.items.map((ci: string, idx: number) => (
+                  <div key={idx} style={{ fontSize: 18, fontWeight: 700, color: TOKENS.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ color: calloutPal.fg }}>•</span>
+                    <span>{ci}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -4731,7 +5181,7 @@ const PrimitiveSpotlightWindowTour: React.FC<{ scene: StudioScene }> = ({ scene 
   );
 };
 
-// 31. vignette_metaphor_stage — Radial-Feathered Visual Metaphor Centerpiece + Clause-Synced Floating Callout Pills
+// 31. vignette_metaphor_stage — Radial-Feathered Image Metaphor OR Collision-Free Flex Dual Contrast Stage
 const PrimitiveVignetteMetaphorStage: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -4741,42 +5191,193 @@ const PrimitiveVignetteMetaphorStage: React.FC<{ scene: StudioScene }> = ({ scen
   const p2 = settle(spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY }));
   const checklist: string[] = Array.isArray(d.checklist) ? d.checklist : [];
 
+  if (!d.imageFile) {
+    return (
+      <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <div
+          style={{
+            width: 1460,
+            display: 'grid',
+            gridTemplateColumns: '1fr auto 1.08fr',
+            gap: 36,
+            alignItems: 'center',
+            transform: `translateY(${d.topTitle || d.topPill ? 20 : -12}px)`,
+          }}
+        >
+          {/* Left Risk / Fragile Column (Flex stacked — zero overlap!) */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18, opacity: p1 }}>
+            {d.leftCallout && (
+              <div
+                style={{
+                  padding: '10px 28px',
+                  borderRadius: 999,
+                  background: TOKENS.card,
+                  border: `1.5px solid ${TOKENS.coralBorder}`,
+                  fontSize: 22,
+                  fontWeight: 800,
+                  color: TOKENS.coral,
+                }}
+              >
+                {d.leftCallout}
+              </div>
+            )}
+            <div
+              style={{
+                width: '100%',
+                minHeight: 330,
+                borderRadius: 24,
+                background: 'radial-gradient(circle at 50% 45%, rgba(224,85,73,0.20), rgba(50,50,50,0.35) 74%)',
+                border: `2px dashed ${TOKENS.coralBorder}`,
+                padding: '34px 32px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 18,
+              }}
+            >
+              <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                <circle cx="32" cy="32" r="26" stroke={TOKENS.coral} strokeWidth="3" strokeDasharray="6 5" fill="rgba(224,85,73,0.12)" />
+                <path d="M32 18V35" stroke={TOKENS.coral} strokeWidth="4.2" strokeLinecap="round" />
+                <circle cx="32" cy="44.5" r="2.8" fill={TOKENS.coral} />
+              </svg>
+              <span style={{ fontSize: 32, fontWeight: 900, color: TOKENS.coral, textAlign: 'center' }}>
+                {d.leftLabel || '單點故障風險'}
+              </span>
+              {d.leftSub && (
+                <span style={{ fontSize: 20, fontWeight: 600, color: TOKENS.inkSecondary, textAlign: 'center' }}>
+                  {d.leftSub}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Center Arrow */}
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: '50%',
+              background: TOKENS.card,
+              border: `1.5px solid ${TOKENS.amberBorder}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: Math.max(0.35, p2),
+            }}
+          >
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+              <path d="M5 12H19M19 12L13 6M19 12L13 18" stroke={TOKENS.amber} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+
+          {/* Right Resilient / Cloud Column (Flex stacked — zero overlap!) */}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 18,
+              opacity: Math.max(0.24, p2),
+              transform: `translateY(${interpolate(p2, [0, 1], [18, 0]).toFixed(2)}px)`,
+            }}
+          >
+            {d.rightCallout && (
+              <div
+                style={{
+                  padding: '10px 28px',
+                  borderRadius: 999,
+                  background: '#1E2A26',
+                  border: `1.5px solid ${TOKENS.emeraldMint}`,
+                  fontSize: 22,
+                  fontWeight: 800,
+                  color: TOKENS.emeraldMint,
+                }}
+              >
+                {d.rightCallout}
+              </div>
+            )}
+            <div
+              style={{
+                width: '100%',
+                minHeight: 330,
+                borderRadius: 24,
+                background: 'radial-gradient(circle at 50% 40%, rgba(23,183,166,0.20), rgba(50,50,50,0.45) 76%)',
+                border: `2px solid ${TOKENS.emeraldBorder}`,
+                padding: '32px 34px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 16,
+                boxShadow: '0 24px 56px rgba(0,0,0,0.42)',
+              }}
+            >
+              <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                <path
+                  d="M20 46H45.5C51.3 46 56 41.3 56 35.5C56 30.1 51.9 25.6 46.6 25.1C44.8 17.6 38.1 12 30 12C20.6 12 13 19.6 13 29C13 29.6 13 30.2 13.1 30.8C9.6 32.3 7.2 35.8 7.2 39.8C7.2 43.2 10 46 13.5 46H20Z"
+                  stroke={TOKENS.emeraldMint}
+                  strokeWidth="3"
+                  fill="rgba(23,183,166,0.14)"
+                  strokeLinejoin="round"
+                />
+                <polyline points="24 31.5 29.5 37 40.5 25.5" stroke={TOKENS.emeraldMint} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span style={{ fontSize: 32, fontWeight: 900, color: TOKENS.emeraldMint, textAlign: 'center' }}>
+                {d.rightLabel || '雲端持續在線'}
+              </span>
+
+              {checklist.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 10, marginTop: 6 }}>
+                  {checklist.map((item, idx) => (
+                    <span
+                      key={idx}
+                      style={{
+                        padding: '6px 16px',
+                        borderRadius: 999,
+                        background: 'rgba(19, 159, 107, 0.16)',
+                        border: `1px solid ${TOKENS.emeraldBorder}`,
+                        fontSize: 18,
+                        fontWeight: 800,
+                        color: TOKENS.ink,
+                      }}
+                    >
+                      <span style={{ color: TOKENS.emeraldMint, marginRight: 6 }}>✓</span>
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </AbsoluteFill>
+    );
+  }
+
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div style={{ position: 'relative', width: 1520, height: 680, display: 'flex', alignItems: 'center', justifyContent: 'center', transform: 'translateY(-14px)' }}>
-        {d.imageFile ? (
-          <div
+        <div
+          style={{
+            width: 1180,
+            height: 620,
+            overflow: 'hidden',
+            opacity: p1,
+            WebkitMaskImage: 'radial-gradient(ellipse 72% 70% at 50% 50%, #000 58%, transparent 100%)',
+            maskImage: 'radial-gradient(ellipse 72% 70% at 50% 50%, #000 58%, transparent 100%)',
+          }}
+        >
+          <Img
+            src={staticFile(d.imageFile)}
             style={{
-              width: 1180,
-              height: 620,
-              overflow: 'hidden',
-              opacity: p1,
-              WebkitMaskImage: 'radial-gradient(ellipse 72% 70% at 50% 50%, #000 58%, transparent 100%)',
-              maskImage: 'radial-gradient(ellipse 72% 70% at 50% 50%, #000 58%, transparent 100%)',
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              transform: `scale(${1 + Math.sin(frame / 90) * 0.02})`,
             }}
-          >
-            <Img
-              src={staticFile(d.imageFile)}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                transform: `scale(${1 + Math.sin(frame / 90) * 0.02})`,
-              }}
-            />
-          </div>
-        ) : (
-          <div style={{ display: 'flex', gap: 64, alignItems: 'center', opacity: p1 }}>
-            <div style={{ width: 420, height: 320, borderRadius: 24, background: 'radial-gradient(circle, rgba(224,85,73,0.22), transparent 72%)', border: `2px dashed ${TOKENS.coralBorder}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
-              <span style={{ fontSize: 68 }}>{d.leftEmoji || '🔥'}</span>
-              <span style={{ fontSize: 28, fontWeight: 900, color: TOKENS.coral }}>{d.leftLabel || '單點故障風險'}</span>
-            </div>
-            <div style={{ width: 460, height: 320, borderRadius: 24, background: 'radial-gradient(circle, rgba(23,183,166,0.22), transparent 72%)', border: `2px solid ${TOKENS.emeraldBorder}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
-              <span style={{ fontSize: 68 }}>{d.rightEmoji || '☁️'}</span>
-              <span style={{ fontSize: 28, fontWeight: 900, color: TOKENS.emeraldMint }}>{d.rightLabel || '雲端持續在線'}</span>
-            </div>
-          </div>
-        )}
+          />
+        </div>
 
         {d.leftCallout && (
           <div
@@ -4866,20 +5467,59 @@ export const StudioVideo: React.FC<{
     >
       {payload.audioFile ? <Audio src={staticFile(payload.audioFile)} /> : null}
 
-      {/* Continuous Global 4px Top Amber Progress Bar */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 4,
-          background: '#333333',
-          zIndex: 50,
-        }}
-      >
-        <div style={{ width: `${globalPct}%`, height: '100%', background: TOKENS.amber }} />
-      </div>
+      {/* Proportional Chapter-Segmented 4px Top Amber Progress Bar */}
+      {Array.isArray(payload.chapterDurationsSec) && payload.chapterDurationsSec.length > 1 ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 4,
+            background: TOKENS.canvas,
+            display: 'flex',
+            gap: 3,
+            zIndex: 50,
+          }}
+        >
+          {payload.chapterDurationsSec.map((chDur, idx) => {
+            const cNum = idx + 1;
+            const segPct =
+              cNum < payload.chapterIndex
+                ? 100
+                : cNum > payload.chapterIndex
+                ? 0
+                : Math.min(100, Math.max(0, (curSec / Math.max(0.1, payload.chapterDurationSec)) * 100));
+            return (
+              <div
+                key={idx}
+                style={{
+                  flex: Math.max(1, chDur),
+                  height: '100%',
+                  background: '#363636',
+                  overflow: 'hidden',
+                }}
+              >
+                <div style={{ width: `${segPct.toFixed(2)}%`, height: '100%', background: TOKENS.amber }} />
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 4,
+            background: '#363636',
+            zIndex: 50,
+          }}
+        >
+          <div style={{ width: `${globalPct}%`, height: '100%', background: TOKENS.amber }} />
+        </div>
+      )}
 
       {/* Top-Left Chapter HUD with Smooth Entrance */}
       <div
@@ -4923,24 +5563,59 @@ export const StudioVideo: React.FC<{
               {sc.primitive === 'evidence_clip' && <PrimitiveEvidenceClip scene={sc} />}
               {sc.primitive === 'skill_editor_spotlight' && <PrimitiveSkillEditorSpotlight scene={sc} />}
               {sc.primitive === 'stack_slice_builder' && <PrimitiveStackSliceBuilder scene={sc} />}
-              {(sc.primitive === 'traffic_gate_box' || sc.primitive === 'deep_module_box') && <PrimitiveTrafficGateBox scene={sc} />}
+              {sc.primitive === 'traffic_gate_box' &&
+                (sc.data?.mode === 'github_pr_checks' || sc.data?.mode === 'checks_gate' ? (
+                  <PrimitivePrChecksGateCard scene={sc} />
+                ) : (
+                  <PrimitiveTrafficGateBox scene={sc} />
+                ))}
+              {sc.primitive === 'deep_module_box' && <PrimitiveDeepModuleBox scene={sc} />}
               {sc.primitive === 'split_tree_chat_dispatch' && <PrimitiveSplitTreeChatDispatch scene={sc} />}
               {sc.primitive === 'annotated_ui_tour' && <PrimitiveAnnotatedUiTour scene={sc} />}
               {sc.primitive === 'org_tree_radiate' && <PrimitiveOrgTreeRadiate scene={sc} />}
-              {sc.primitive === 'pipeline_timeline_flow' && <PrimitivePipelineTimelineFlow scene={sc} />}
+              {sc.primitive === 'pipeline_timeline_flow' &&
+                (sc.data?.mode === 'dual_track_race' ? (
+                  <PrimitiveDualTrackPipelineRace scene={sc} />
+                ) : (
+                  <PrimitivePipelineTimelineFlow scene={sc} />
+                ))}
               {sc.primitive === 'defense_boundary_flow' && <PrimitiveDefenseBoundaryFlow scene={sc} />}
               {sc.primitive === 'row_permission_table' && <PrimitiveRowPermissionTable scene={sc} />}
               {sc.primitive === 'acronym_token_slot' && <PrimitiveAcronymTokenSlot scene={sc} />}
-              {sc.primitive === 'metaphor_canvas' && <PrimitiveMetaphorCanvas scene={sc} />}
-              {sc.primitive === 'before_after_transformer' && <PrimitiveBeforeAfterTransformer scene={sc} />}
+              {sc.primitive === 'metaphor_canvas' &&
+                (sc.data?.mode === 'regression_loop' ? (
+                  <PrimitiveRegressionLoopStage scene={sc} />
+                ) : (
+                  <PrimitiveMetaphorCanvas scene={sc} />
+                ))}
+              {sc.primitive === 'before_after_transformer' &&
+                (sc.data?.mode === 'regression_loop' ? (
+                  <PrimitiveRegressionLoopStage scene={sc} />
+                ) : (
+                  <PrimitiveBeforeAfterTransformer scene={sc} />
+                ))}
               {sc.primitive === 'synergy_puzzle_pair' && <PrimitiveSynergyPuzzlePair scene={sc} />}
               {sc.primitive === 'multi_perspective_ring' && <PrimitiveMultiPerspectiveRing scene={sc} />}
               {sc.primitive === 'convergent_hub_bus' && <PrimitiveConvergentHubBus scene={sc} />}
               {sc.primitive === 'arc_gauge_audit' && <PrimitiveArcGaugeAudit scene={sc} />}
-              {sc.primitive === 'idle_waste_vs_event_wake' && <PrimitiveIdleWasteVsEventWake scene={sc} />}
+              {sc.primitive === 'idle_waste_vs_event_wake' &&
+                (sc.data?.mode === 'dual_track_race' ? (
+                  <PrimitiveDualTrackPipelineRace scene={sc} />
+                ) : (
+                  <PrimitiveIdleWasteVsEventWake scene={sc} />
+                ))}
               {sc.primitive === 'binary_decision_tree' && <PrimitiveBinaryDecisionTree scene={sc} />}
               {sc.primitive === 'spotlight_window_tour' && <PrimitiveSpotlightWindowTour scene={sc} />}
               {sc.primitive === 'vignette_metaphor_stage' && <PrimitiveVignetteMetaphorStage scene={sc} />}
+              {sc.primitive === 'surface_vs_background_iceberg' && <PrimitiveSurfaceVsBackgroundIceberg scene={sc} />}
+              {sc.primitive === 'git_branch_merge_graph' && <PrimitiveGitBranchMergeGraph scene={sc} />}
+              {sc.primitive === 'pr_checks_gate_card' && <PrimitivePrChecksGateCard scene={sc} />}
+              {sc.primitive === 'slot_validation_and_stopwatch' && <PrimitiveSlotValidationAndStopwatch scene={sc} />}
+              {sc.primitive === 'autonomous_bot_ui_tester' && <PrimitiveAutonomousBotUiTester scene={sc} />}
+              {sc.primitive === 'env_isolation_compare' && <PrimitiveEnvIsolationCompare scene={sc} />}
+              {sc.primitive === 'swiss_cheese_defense_layers' && <PrimitiveSwissCheeseDefenseLayers scene={sc} />}
+              {sc.primitive === 'regression_loop_stage' && <PrimitiveRegressionLoopStage scene={sc} />}
+              {sc.primitive === 'dual_track_pipeline_race' && <PrimitiveDualTrackPipelineRace scene={sc} />}
             </SceneStageTransition>
           </Sequence>
         );

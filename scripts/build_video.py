@@ -233,20 +233,38 @@ VALID_PRIMITIVES = {
     "binary_decision_tree",
     "spotlight_window_tour",
     "vignette_metaphor_stage",
+    "surface_vs_background_iceberg",
+    "git_branch_merge_graph",
+    "pr_checks_gate_card",
+    "slot_validation_and_stopwatch",
+    "autonomous_bot_ui_tester",
+    "env_isolation_compare",
+    "swiss_cheese_defense_layers",
+    "regression_loop_stage",
+    "dual_track_pipeline_race",
 }
+
+EMOJI_RE = re.compile(
+    "[\U0001F300-\U0001FAFF\U00002600-\U000026FF\U00002700-\U000027BF]"
+)
 
 
 def count_units(s: str) -> int:
     return len(re.findall(r"[\u4e00-\u9fff]", s)) + len(re.findall(r"[A-Za-z0-9]+", s))
 
 
+def count_cjk(s: str) -> int:
+    return len(re.findall(r"[\u4e00-\u9fff]", str(s or "")))
+
+
 def normalize_tts_text(raw: str, lang: str = "zh") -> str:
     """
     Clean bilingual CJK + English tech text & numeric symbols for GPT-SoVITS without altering display_text:
     1. Strip thousand-separator commas inside digits ('1,000' -> '1000') so TTS never pauses mid-number.
-    2. Expand '$N' shorthand naturally in Chinese mode ('$0' -> '0 美元', '$30' -> '30 美元').
-    3. Replace hyphens inside CLI identifiers ('yt-dlp' -> 'yt dlp', 'grill-me' -> 'grill me').
-    4. Insert clean space boundaries between CJK characters and ASCII words/digits.
+    2. Expand '$N' / '€N' shorthand naturally AFTER magnitude units ('$1,000万' -> '1000万美元', '$30多' -> '30多美元').
+    3. Split CamelCase brand/tech identifiers ('SwipeWipe' -> 'Swipe Wipe', 'PhotoKit' -> 'Photo Kit') for exact CMUdict G2P.
+    4. Replace hyphens inside CLI identifiers ('yt-dlp' -> 'yt dlp', 'grill-me' -> 'grill me').
+    5. Insert clean space boundaries between CJK characters and ASCII words/digits.
     """
     t = raw.strip()
     if not t:
@@ -254,16 +272,89 @@ def normalize_tts_text(raw: str, lang: str = "zh") -> str:
     # 1. Remove thousand commas inside numbers: 1,000,000 -> 1000000
     while re.search(r"(\d),(\d{3})(?!\d)", t):
         t = re.sub(r"(\d),(\d{3})(?!\d)", r"\1\2", t)
-    # 2. Currency $N in zh/mix mode
+    # 2. Currency $N / €N / £N in zh/mix mode (preserve trailing 万/亿/多 before currency unit!)
     if lang != "en":
-        t = re.sub(r"\$(\d+(?:\.\d+)?)", r"\1 美元", t)
-    # 3. Hyphenated ASCII tech identifiers -> space
+        t = re.sub(r"\$(\d+(?:\.\d+)?)\s*([万亿千百十多余]*)", r"\1\2美元", t)
+        t = re.sub(r"€(\d+(?:\.\d+)?)\s*([万亿千百十多余]*)", r"\1\2欧元", t)
+        t = re.sub(r"£(\d+(?:\.\d+)?)\s*([万亿千百十多余]*)", r"\1\2英镑", t)
+
+    # 3. Split CamelCase English compound words (e.g. SwipeWipe -> Swipe Wipe, RevenueCat -> Revenue Cat, keep iOS/macOS)
+    def _split_camel(m: re.Match) -> str:
+        full = m.group(0)
+        if full in {"macOS", "iCloud", "iPhone", "iPad", "YouTube", "GitHub", "TikTok", "OpenAI", "ChatGPT"}:
+            return full
+        return f"{m.group(1)} {m.group(2)}"
+
+    t = re.sub(r"([A-Za-z][a-z]{1,})([A-Z][a-z]+)", _split_camel, t)
+    # 4. Hyphenated ASCII tech identifiers -> space
     t = re.sub(r"([A-Za-z])-([A-Za-z0-9])", r"\1 \2", t)
-    # 4. Space CJK <-> ASCII boundaries for cleaner bilingual phoneme transitions
+    # 5. Space CJK <-> ASCII boundaries for cleaner bilingual phoneme transitions
     t = re.sub(r"([\u4e00-\u9fff])([A-Za-z0-9])", r"\1 \2", t)
     t = re.sub(r"([A-Za-z0-9])([\u4e00-\u9fff])", r"\1 \2", t)
     t = re.sub(r"\s{2,}", " ", t)
     return t.strip()
+
+
+def audit_scene_canvas_copy(sc_id: str, prim: str, sc_data: dict) -> list[str]:
+    """
+    Enforce the '6-8-12 Minimal Visual Copy Diet' on Remotion scene.data:
+    - Badges / Pills / Rooms / Stepper items: <= 7 CJK chars (target <= 6)
+    - Card Titles / Headers: <= 9 CJK chars (target <= 8)
+    - Subtitles / Details / Notes: <= 14 CJK chars (target <= 12)
+    - Total visible CJK chars per scene canvas (excluding code/evidence quotes): <= 45 CJK chars
+    """
+    warns: list[str] = []
+    if not isinstance(sc_data, dict):
+        return warns
+
+    PILL_KEYS = {"badge", "leftPill", "rightPill", "topPillTag", "clickedLabel", "primaryAction", "secondaryAction"}
+    PILL_LIST_KEYS = {"pills", "badges", "syncPills", "rooms", "spokes", "leafNodes"}
+    TITLE_KEYS = {"title", "header", "leftTitle", "rightTitle", "arch1Title", "arch2Title", "baseTitle", "hubTitle", "centerTitle", "role"}
+    DETAIL_KEYS = {"subtitle", "detail", "note", "leftSub", "rightSub", "leftDetail", "rightDetail", "arch1Desc", "arch2Desc", "bottomCaption", "failBanner", "footerWarning"}
+    SKIP_TOTAL_PRIMS = {"evidence_clip", "terminal_code_live", "skill_editor_spotlight"}
+    IGNORE_KEYS = {"videoFile", "imageFile", "avatarFile", "mode", "tone", "topAccentTone", "topAccentWord", "color", "icon", "stepperStyle"}
+
+    total_cjk = 0
+
+    def _walk(obj, path: str = "data"):
+        nonlocal total_cjk
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k in IGNORE_KEYS:
+                    continue
+                sub_p = f"{path}.{k}"
+                if isinstance(v, str):
+                    n_cjk = count_cjk(v)
+                    if k != "code":
+                        total_cjk += n_cjk
+                    if k in PILL_KEYS and n_cjk > 7:
+                        warns.append(f"[Canvas Copy Diet] Scene '{sc_id}' {sub_p} has {n_cjk} CJK chars (>7): {v!r}")
+                    elif k in TITLE_KEYS and n_cjk > 9:
+                        warns.append(f"[Canvas Copy Diet] Scene '{sc_id}' {sub_p} has {n_cjk} CJK chars (>9): {v!r}")
+                    elif k in DETAIL_KEYS and n_cjk > 14:
+                        warns.append(f"[Canvas Copy Diet] Scene '{sc_id}' {sub_p} has {n_cjk} CJK chars (>14): {v!r}")
+                elif isinstance(v, list) and k in PILL_LIST_KEYS:
+                    for idx_item, item in enumerate(v):
+                        s_val = item if isinstance(item, str) else (item.get("title", "") + item.get("sub", "") if isinstance(item, dict) else "")
+                        n_cjk = count_cjk(s_val)
+                        total_cjk += n_cjk
+                        if n_cjk > 8:
+                            warns.append(f"[Canvas Copy Diet] Scene '{sc_id}' {sub_p}[{idx_item}] has {n_cjk} CJK chars (>8): {s_val!r}")
+                else:
+                    _walk(v, sub_p)
+        elif isinstance(obj, list):
+            for idx_item, item in enumerate(obj):
+                if isinstance(item, str):
+                    total_cjk += count_cjk(item)
+                else:
+                    _walk(item, f"{path}[{idx_item}]")
+
+    _walk(sc_data)
+    if prim not in SKIP_TOTAL_PRIMS and total_cjk > 45:
+        warns.append(
+            f"[Canvas Overload] Scene '{sc_id}' ({prim}) packs {total_cjk} CJK chars on screen (>45 limit). Distill into short keywords!"
+        )
+    return warns
 
 
 def sha256_str(s: str) -> str:
@@ -303,9 +394,24 @@ def lint_project(proj: dict, strict_sync: bool = False, voice_override: str | No
             prim = sc.get("primitive")
             if prim not in VALID_PRIMITIVES:
                 raise ValueError(f"Scene '{sc.get('id')}' uses unknown primitive '{prim}'. Valid: {sorted(VALID_PRIMITIVES)}")
+            sc_data = sc.get("data") or {}
+            sc_mode = sc_data.get("mode")
+            deprecated_modes = {
+                ("org_tree_radiate", "hierarchy_compare"): "hierarchy_compare mode was removed; use radial org_tree_radiate or convergent_hub_bus.",
+                ("pipeline_timeline_flow", "race_timeline"): "race_timeline mode was removed; use domino pipeline_timeline_flow or matrix_compare.",
+                ("metaphor_canvas", "no_door_house"): "no_door_house mode was removed; use deep_module_box or vignette_metaphor_stage.",
+            }
+            if (prim, sc_mode) in deprecated_modes:
+                raise ValueError(f"Scene '{sc.get('id')}' uses deleted sub-mode '{sc_mode}' on '{prim}': {deprecated_modes[(prim, sc_mode)]}")
+            data_str = json.dumps(sc_data, ensure_ascii=False)
+            if EMOJI_RE.search(data_str):
+                warnings.append(
+                    f"[No-Emoji Policy] Scene '{sc.get('id')}' ({prim}) contains emoji in scene.data. Prefer pure text + code-drawn vector icon keys (e.g. 'bot', 'lock', 'zap', 'scale', 'cog', 'trash', 'alert')."
+                )
             if prim == prev_prim:
                 warnings.append(f"[Anti-Fatigue] Scene '{sc.get('id')}' repeats adjacent primitive '{prim}'. Consider alternating!")
             prev_prim = prim
+            warnings.extend(audit_scene_canvas_copy(str(sc.get("id")), str(prim), sc_data))
 
             for cl in sc.get("clauses", []):
                 disp = cl.get("display_text", "")
@@ -313,6 +419,10 @@ def lint_project(proj: dict, strict_sync: bool = False, voice_override: str | No
                 u = count_units(disp)
                 if u > 21:
                     warnings.append(f"[Caption Length] Scene '{sc.get('id')}' display_text has {u} units (>21): {disp}")
+                if re.search(r"(第\s*3\s*方|(?<!\d)1\s*(?:个|遍|起|人公司|套|次性))", disp):
+                    warnings.append(
+                        f"[Robotic Numeral] Scene '{sc.get('id')}' display_text uses Arabic digit in Chinese idiom ({disp!r}); prefer 第三方/一个/一遍/一人公司."
+                    )
                 # Verbatim Sync Guard: check unspoken CJK words in display_text
                 disp_cjk = set(re.findall(r"[\u4e00-\u9fff]", disp)) - NUMBER_CHARS
                 tts_cjk = set(re.findall(r"[\u4e00-\u9fff]", tts)) - NUMBER_CHARS
@@ -396,11 +506,16 @@ def onset_safe_trim_48k(raw_wav: Path, out_wav: Path, sr_target: int = 48000) ->
     return len(clipped) / float(sr)
 
 
-def is_healthy_clause_audio(wav_arr: np.ndarray, sr: int, chars: list, n_units: int) -> tuple[bool, str]:
+def is_healthy_clause_audio(
+    wav_arr: np.ndarray,
+    sr: int,
+    chars: list,
+    n_units: int,
+    asr_engine=None,
+    expected_text: str = "",
+) -> tuple[bool, str]:
     """
-    Detect stochastic GPT-SoVITS attention collapse / silent output / early EOS truncation.
-    Healthy 48kHz speech has RMS >= 0.018, Peak >= 0.12, duration >= max(0.50, n_units * 0.088),
-    and does not collapse >65% of aligned characters into zero-length timestamps (start == end).
+    Detect stochastic GPT-SoVITS attention collapse / silent output / early EOS truncation / mid-word stalls / skipped words.
     """
     if len(wav_arr) == 0:
         return False, "empty_waveform"
@@ -416,6 +531,26 @@ def is_healthy_clause_audio(wav_arr: np.ndarray, sr: int, chars: list, n_units: 
         nonzero = sum(1 for c in chars if (float(c["end"]) - float(c["start"])) > 0.005)
         if nonzero < len(chars) * 0.35:
             return False, f"aligner_timestamp_collapse(nonzero={nonzero}/{len(chars)})"
+        # Detect unnatural mid-phrase stalls (>0.34s gap without punctuation)
+        for m_i in range(len(chars) - 1):
+            tok_cur = str(chars[m_i].get("text", "")).strip()
+            if tok_cur in {"", "，", ",", "、", "：", ":", "；", ";"}:
+                continue
+            gap = float(chars[m_i + 1]["start"]) - float(chars[m_i]["end"])
+            if gap > 0.34:
+                return False, f"mid_clause_stall(gap={gap:.2f}s after {tok_cur!r})"
+
+    if asr_engine is not None and expected_text and n_units >= 5:
+        try:
+            tmp_chk = Path(f"/tmp/vstudio_asr_chk_{os.getpid()}.wav")
+            sf.write(str(tmp_chk), wav_arr, sr, subtype="PCM_16")
+            asr_res = asr_engine.transcribe(str(tmp_chk))
+            tmp_chk.unlink(missing_ok=True)
+            heard_units = count_units(asr_res.text or "")
+            if heard_units < max(3, int(round(n_units * 0.78))):
+                return False, f"asr_word_drop(heard={heard_units}/{n_units}: {asr_res.text!r})"
+        except Exception:
+            pass
     return True, "ok"
 
 
@@ -494,9 +629,10 @@ def synth_and_align_clause(
     aligner,
     voice: str | None = None,
     reg: dict | None = None,
+    asr_engine=None,
 ) -> tuple[Path, float, list, str, str]:
     """
-    Aligner-Guided + Acoustic-Bounded Exact Trim & Timestamping (v6 Normalized + Tight Tail Margin):
+    Aligner-Guided + Acoustic-Bounded Exact Trim & Timestamping (v7 Tail-Safe + ASR Guard):
     """
     vid, vcfg, eff_preset, ref_wav_init, _, _ = resolve_voice_preset(voice, preset, reg)
     resolved_lang_init = "en" if eff_preset == "en" else "zh"
@@ -504,7 +640,7 @@ def synth_and_align_clause(
     aux_refs = resolve_voice_aux_refs(vcfg)
     aux_sig = ",".join(Path(p).name for p in aux_refs)
     weight_sig = f"{vid}|{vcfg.get('gpt_weights', '')}|{vcfg.get('sovits_weights', '')}|{Path(ref_wav_init).name}|{aux_sig}"
-    key = sha256_str(f"v6_norm_clause|{weight_sig}|{eff_preset}|{speed:.3f}|{clean_tts}")
+    key = sha256_str(f"v7_tailsafe_clause|{weight_sig}|{eff_preset}|{speed:.3f}|{clean_tts}")
     wav_cache = cache_dir / f"clause_{key}.wav"
     json_cache = cache_dir / f"clause_{key}.json"
     n_units = max(1, count_units(clean_tts))
@@ -590,7 +726,8 @@ def synth_and_align_clause(
 
         win = max(1, int(0.005 * sr))
         padded = np.pad(np.abs(wav), (0, (-len(wav)) % win))
-        active_wins = np.where(padded.reshape(-1, win).max(axis=1) > 0.012)[0]
+        # -53 dBFS (0.0022) preserves soft falling-tone sentence-ending vowels/nasals (e.g. '穿', '计', '阅')
+        active_wins = np.where(padded.reshape(-1, win).max(axis=1) > 0.0022)[0]
         ac_on_sec = float(active_wins[0] * win) / sr if len(active_wins) > 0 else 0.0
         ac_off_sec = float(min(len(wav), (active_wins[-1] + 1) * win)) / sr if len(active_wins) > 0 else (len(wav) / float(sr))
 
@@ -600,7 +737,7 @@ def synth_and_align_clause(
             eff_start = min(first_st, ac_on_sec) if len(active_wins) > 0 else first_st
             eff_end = max(last_ed, ac_off_sec) if len(active_wins) > 0 else last_ed
             cut_start_sec = max(0.0, eff_start - 0.055)
-            cut_end_sec = min(len(wav) / float(sr), eff_end + 0.055)
+            cut_end_sec = min(len(wav) / float(sr), eff_end + 0.095)
             i0 = int(round(cut_start_sec * sr))
             i1 = max(i0 + 1, int(round(cut_end_sec * sr)))
             clipped = wav[i0:i1].copy()
@@ -609,11 +746,12 @@ def synth_and_align_clause(
                 extra_pre_sec = 0.045 - (eff_start - cut_start_sec)
                 clipped = np.concatenate([np.zeros(int(round(extra_pre_sec * sr)), dtype=np.float32), clipped])
 
-            fade_n = min(int(0.008 * sr), len(clipped) // 8)
-            if fade_n > 1:
-                fc = 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_n, dtype=np.float32) / fade_n))
-                clipped[:fade_n] *= fc
-                clipped[-fade_n:] *= fc[::-1]
+            fade_in_n = min(int(0.008 * sr), len(clipped) // 8)
+            fade_out_n = min(int(0.016 * sr), len(clipped) // 6)
+            if fade_in_n > 1:
+                clipped[:fade_in_n] *= 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_in_n, dtype=np.float32) / fade_in_n))
+            if fade_out_n > 1:
+                clipped[-fade_out_n:] *= (0.5 * (1.0 - np.cos(np.pi * np.arange(fade_out_n, dtype=np.float32) / fade_out_n)))[::-1]
 
             clip_dur = round(len(clipped) / float(sr), 3)
             chars = [
@@ -625,12 +763,12 @@ def synth_and_align_clause(
                 for s in raw_segs
             ]
             if chars and chars[-1]["end"] < clip_dur - 0.22:
-                chars[-1]["end"] = round(max(chars[-1]["start"] + 0.08, clip_dur - 0.05), 3)
+                chars[-1]["end"] = round(max(chars[-1]["start"] + 0.08, clip_dur - 0.06), 3)
         else:
             clipped = wav.copy()
             chars = []
 
-        ok, reason = is_healthy_clause_audio(clipped, sr, chars, n_units)
+        ok, reason = is_healthy_clause_audio(clipped, sr, chars, n_units, asr_engine=asr_engine, expected_text=clean_tts)
         if ok:
             if attempt_idx > 1:
                 print(f"[VoiceClone Guard] Retry #{attempt_idx} succeeded for: {clean_tts} (dur={len(clipped)/sr:.2f}s)")
@@ -655,13 +793,13 @@ def synth_and_align_group(
     aligner,
     voice: str | None = None,
     reg: dict | None = None,
+    asr_engine=None,
 ) -> list[tuple[Path, float, list, str, str]] | None:
     """
     Coherent Thought-Group Synthesis ('cut0' Single-Pass AR Prosody):
     Synthesizes 2-3 continuation clauses in ONE GPT-SoVITS pass so mid-sentence commas keep natural
     rising/suspended F0 pitch instead of dropping flat on every clause, then uses Qwen3-ForcedAligner
-    + 5ms minimum-energy valley detection to slice clean per-clause WAVs for exact Remotion beat control.
-    Returns None on any alignment ambiguity so caller seamlessly falls back to per-clause synthesis.
+    + 5ms minimum-energy valley detection + -53 dBFS acoustic tail protection to slice clean per-clause WAVs.
     """
     if len(raw_texts) < 2:
         return None
@@ -680,7 +818,7 @@ def synth_and_align_group(
     aux_refs = resolve_voice_aux_refs(vcfg)
     aux_sig = ",".join(Path(p).name for p in aux_refs)
     weight_sig = f"{vid}|{vcfg.get('gpt_weights', '')}|{vcfg.get('sovits_weights', '')}|{Path(ref_wav).name}|{aux_sig}"
-    g_key = sha256_str(f"v6_group_cut0|{weight_sig}|{eff_preset}|{speed:.3f}|{'||'.join(norm_list)}")
+    g_key = sha256_str(f"v7_tailsafe_group|{weight_sig}|{eff_preset}|{speed:.3f}|{'||'.join(norm_list)}")
     g_meta_path = cache_dir / f"group_{g_key}.json"
     sr = 48000
 
@@ -775,15 +913,20 @@ def synth_and_align_group(
         if any(len(b) == 0 for b in buckets):
             return None
 
-        # Locate clean 5ms minimum-RMS valleys between adjacent clauses
+        # Locate clean 5ms minimum-RMS valleys between adjacent clauses + protect final acoustic tail (-53 dBFS)
         total_sec = len(wav) / float(sr)
         win_5ms = max(1, int(0.005 * sr))
-        boundaries = [max(0.0, float(buckets[0][0]["start"]) - 0.050)]
+        padded_g = np.pad(np.abs(wav), (0, (-len(wav)) % win_5ms))
+        active_g = np.where(padded_g.reshape(-1, win_5ms).max(axis=1) > 0.0022)[0]
+        ac_on_g = float(active_g[0] * win_5ms) / sr if len(active_g) > 0 else 0.0
+        ac_off_g = float(min(len(wav), (active_g[-1] + 1) * win_5ms)) / sr if len(active_g) > 0 else total_sec
+
+        boundaries = [max(0.0, min(float(buckets[0][0]["start"]), ac_on_g) - 0.050)]
         for k in range(len(buckets) - 1):
             prev_ed = float(buckets[k][-1]["end"])
             next_st = float(buckets[k + 1][0]["start"])
-            lo_s = max(0.0, min(prev_ed, next_st) - 0.030)
-            hi_s = min(total_sec, max(prev_ed, next_st) + 0.030)
+            lo_s = max(0.0, prev_ed - 0.012)
+            hi_s = min(total_sec, max(prev_ed + 0.025, next_st + 0.012))
             i_lo = int(lo_s * sr)
             i_hi = max(i_lo + win_5ms, int(hi_s * sr))
             region = wav[i_lo:i_hi]
@@ -791,7 +934,7 @@ def synth_and_align_group(
             rms_w = np.sqrt(np.mean(region[:n_w * win_5ms].reshape(n_w, win_5ms) ** 2, axis=1) + 1e-12)
             best_s = lo_s + (int(np.argmin(rms_w)) + 0.5) * 0.005
             boundaries.append(best_s)
-        boundaries.append(min(total_sec, float(buckets[-1][-1]["end"]) + 0.055))
+        boundaries.append(min(total_sec, max(float(buckets[-1][-1]["end"]), ac_off_g) + 0.095))
 
         results = []
         meta_items = []
@@ -801,11 +944,12 @@ def synth_and_align_group(
             s0 = int(round(c0 * sr))
             s1 = min(len(wav), max(s0 + 1, int(round(c1 * sr))))
             sub_wav = wav[s0:s1].copy()
-            fade_n = min(int(0.006 * sr), len(sub_wav) // 8)
-            if fade_n > 1:
-                fc = 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_n, dtype=np.float32) / fade_n))
-                sub_wav[:fade_n] *= fc
-                sub_wav[-fade_n:] *= fc[::-1]
+            fade_in_n = min(int(0.006 * sr), len(sub_wav) // 8)
+            fade_out_n = min(int(0.014 * sr), len(sub_wav) // 6) if k == len(buckets) - 1 else min(int(0.006 * sr), len(sub_wav) // 8)
+            if fade_in_n > 1:
+                sub_wav[:fade_in_n] *= 0.5 * (1.0 - np.cos(np.pi * np.arange(fade_in_n, dtype=np.float32) / fade_in_n))
+            if fade_out_n > 1:
+                sub_wav[-fade_out_n:] *= (0.5 * (1.0 - np.cos(np.pi * np.arange(fade_out_n, dtype=np.float32) / fade_out_n)))[::-1]
             sub_dur = round(len(sub_wav) / float(sr), 3)
             sub_chars = [
                 {
@@ -816,7 +960,7 @@ def synth_and_align_group(
                 for sg in b_segs
             ]
             n_u = max(1, count_units(norm_list[k]))
-            ok, _ = is_healthy_clause_audio(sub_wav, sr, sub_chars, n_u)
+            ok, _ = is_healthy_clause_audio(sub_wav, sr, sub_chars, n_u, asr_engine=asr_engine, expected_text=norm_list[k])
             if not ok:
                 return None
             wav_name = f"group_{g_key}_{k:02d}.wav"
@@ -863,6 +1007,15 @@ def build_chapters_clone_mode(
     default_voice = voice_override or proj.get("default_voice") or proj.get("voice") or reg.get("default_voice", "hahaxiong")
     aligner = STTEngine("mlx-community/Qwen3-ForcedAligner-0.6B-8bit")
     aligner.load()
+    asr_guard = None
+    if bool(proj.get("asr_guard", True)):
+        try:
+            asr_guard = STTEngine("mlx-community/whisper-large-v3-turbo")
+            asr_guard.load()
+            print("[ASR Guard] Loaded local whisper-large-v3-turbo for zero-word-drop verification.")
+        except Exception as exc:
+            print(f"[ASR Guard] Whisper local check unavailable ({exc}); relying on aligner & acoustic guard.")
+            asr_guard = None
 
     sr = 48000
     chapters_out = []
@@ -926,7 +1079,7 @@ def build_chapters_clone_mode(
                             break
                     if len(grp_indices) >= 2:
                         grp_res = synth_and_align_group(
-                            grp_texts, p0, speed, cache_dir, aligner, voice=v0, reg=reg
+                            grp_texts, p0, speed, cache_dir, aligner, voice=v0, reg=reg, asr_engine=asr_guard
                         )
                         if grp_res and len(grp_res) == len(grp_indices):
                             for k_pos, orig_i in enumerate(grp_indices):
@@ -935,7 +1088,7 @@ def build_chapters_clone_mode(
                             continue
 
                 synthed_clauses[idx_c] = synth_and_align_clause(
-                    t0, p0, speed, cache_dir, aligner, voice=v0, reg=reg
+                    t0, p0, speed, cache_dir, aligner, voice=v0, reg=reg, asr_engine=asr_guard
                 )
                 idx_c += 1
 
@@ -1352,19 +1505,7 @@ def main():
     cache_dir = out_dir / ".vstudio_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Execute automated Chrome 60fps captures if declared (content-hashed cache invalidation)
-    for cap_spec in proj.get("captures", []):
-        target_mp4 = (proj_dir / cap_spec["output"]).resolve()
-        resolved_spec = dict(cap_spec)
-        resolved_spec["output"] = str(target_mp4)
-        spec_json = json.dumps(resolved_spec, ensure_ascii=False, sort_keys=True, indent=2)
-        spec_hash = sha256_str(spec_json)
-        spec_tmp = cache_dir / f"cap_{spec_hash}.json"
-        if args.force_render or not target_mp4.exists() or not spec_tmp.exists():
-            spec_tmp.write_text(spec_json, encoding="utf-8")
-            subprocess.run(["node", str(CAPTURE_SCRIPT), "--spec", str(spec_tmp)], check=True)
-
-    # 2. Synthesize & align chapters (clone or human passthrough mode; calibrated 1.06 speed + 3-tier breath pauses -> ~350 CPM)
+    # 1. Synthesize & align chapters FIRST so dynamic web captures can match exact spoken scene durations!
     speed = args.speed or float(proj.get("speed_factor", 1.06))
     fps = int(proj.get("fps", 30))
     voice_file = args.voice_file or proj.get("raw_voice_path")
@@ -1374,6 +1515,28 @@ def main():
         chapters = build_chapters_passthrough_mode(proj, (proj_dir / voice_file).resolve(), cache_dir)
     else:
         chapters = build_chapters_clone_mode(proj, cache_dir, speed_default=speed, fps=fps, voice_override=args.voice)
+
+    scene_dur_map = {
+        sc_o["id"]: sc_o["duration"]
+        for ch_o in chapters
+        for sc_o in ch_o.get("scenes", [])
+    }
+
+    # 2. Execute automated Chrome 60fps captures (auto-extending durationSec to match scene voiceover if sceneId linked!)
+    for cap_spec in proj.get("captures", []):
+        target_mp4 = (proj_dir / cap_spec["output"]).resolve()
+        resolved_spec = dict(cap_spec)
+        resolved_spec["output"] = str(target_mp4)
+        linked_sc = cap_spec.get("sceneId")
+        if linked_sc and linked_sc in scene_dur_map:
+            synced_dur = np.ceil((scene_dur_map[linked_sc] + 0.35) * 2.0) / 2.0
+            resolved_spec["durationSec"] = float(max(float(cap_spec.get("durationSec", 4.5)), synced_dur))
+        spec_json = json.dumps(resolved_spec, ensure_ascii=False, sort_keys=True, indent=2)
+        spec_hash = sha256_str(spec_json)
+        spec_tmp = cache_dir / f"cap_{spec_hash}.json"
+        if args.force_render or not target_mp4.exists() or not spec_tmp.exists():
+            spec_tmp.write_text(spec_json, encoding="utf-8")
+            subprocess.run(["node", str(CAPTURE_SCRIPT), "--spec", str(spec_tmp)], check=True)
 
     slug = proj.get("slug", proj_path.stem)
     export_srt(chapters, out_dir / f"{slug}.srt")
@@ -1414,9 +1577,10 @@ def main():
             "chapterStartOffsetSec": ch["chapterStartOffsetSec"],
             "chapterDurationSec": ch["chapterDurationSec"],
             "globalTotalDurationSec": ch["globalTotalDurationSec"],
+            "chapterDurationsSec": [c_item["chapterDurationSec"] for c_item in chapters],
             "audioFile": f"{job_rel}/{audio_name}",
-            "showWaveform": bool(proj.get("show_waveform", True)),
-            "subtitleFontSize": int(proj.get("subtitle_font_size", 56)),
+            "showWaveform": bool(proj.get("show_waveform", False)),
+            "subtitleFontSize": int(proj.get("subtitle_font_size", 44)),
             "waveform": waveform_frames,
             "scenes": staged_scenes,
             "captions": ch["captions"],

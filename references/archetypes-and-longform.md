@@ -5,10 +5,10 @@
 | Archetype ID | Use Case | Scene Mix (Live Stream : Diagram : Breathing/Evidence) | Signature Sequence Pattern |
 | :--- | :--- | :---: | :--- |
 | **`teardown`** | 海外 SaaS / 独立开发产品商业拆解 | `30% : 40% : 30%` | `focus_hud_demo` (痛点钩子) &rarr; `live_web_showcase` (官网/定价实录) &rarr; `evidence_clip` (条款底牌) &rarr; `flow_3node` / `row_permission_table` &rarr; `matrix_compare` (竞品与差评) &rarr; `chapter_card` (7天微创新结论) |
-| **`yt-explainer`** | YouTube 深度演讲 / 外文长视频二创精讲 | `20% : 50% : 30%` | `persona_quote` (原作者背书+核心暴论) &rarr; `dot_matrix_stat` (反常识数据) &rarr; `acronym_token_slot` (完形填空猜词/缩写展开) &rarr; `metaphor_canvas` (旋钮阵列/房子剖面) &rarr; `defense_boundary_flow` / `ranked_bars` &rarr; `chapter_card` (个人实战洞察) |
-| **`science`** | AI / 编程 / 商业底层原理动画科普 | `15% : 60% : 25%` | `focus_hud_demo` (具象困惑) &rarr; `defense_boundary_flow` (两扇拱门/信任边界) &rarr; `row_permission_table` (横向角色权限表) &rarr; `pipeline_timeline_flow` (并发时间轴/流水线传染) &rarr; `skill_editor_spotlight` (报告聚焦) &rarr; `chapter_card` |
-| **`github`** | GitHub 开源项目拆解与跑通实战 | `35% : 40% : 25%` | `chapter_card` (`heroUnderlineMode` 爆款大字钩子) &rarr; `skill_editor_spotlight` (源码/Prompt 逐句聚光灯拆解) &rarr; `stack_slice_builder` (功能切片堆叠+浏览器验收) &rarr; `traffic_gate_box` / `deep_module_box` / `org_tree_radiate` &rarr; `pipeline_timeline_flow` |
-| **`hands-on`** | 新产品 / 新模型第一时间上手实测 | `50% : 25% : 25%` | `chapter_card` (实测悬念) &rarr; `annotated_ui_tour` (`① ② ③` 三栏界面聚光灯导览) &rarr; `org_tree_radiate` (幕僚长架构树对比) &rarr; `split_tree_chat_dispatch` (左树生长左移+右侧派工联动) &rarr; `matrix_compare` / `row_permission_table` |
+| **`yt-explainer`** | YouTube 深度演讲 / 外文长视频二创精讲 | `20% : 50% : 30%` | `persona_quote` (原作者背书+核心暴论) &rarr; `dot_matrix_stat` (反常识数据) &rarr; `acronym_token_slot` (完形填空猜词/缩写展开) &rarr; `metaphor_canvas` (参数旋钮阵列) &rarr; `defense_boundary_flow` / `ranked_bars` &rarr; `chapter_card` (个人实战洞察) |
+| **`science`** | AI / 编程 / 商业底层原理动画科普 | `15% : 60% : 25%` | `focus_hud_demo` (具象困惑) &rarr; `defense_boundary_flow` (两扇拱门/参数化信任边界) &rarr; `row_permission_table` (横向角色权限表) &rarr; `pipeline_timeline_flow` (多米诺骨牌错误传染) &rarr; `skill_editor_spotlight` (报告聚焦) &rarr; `chapter_card` |
+| **`github`** | GitHub 开源项目拆解与跑通实战 | `35% : 40% : 25%` | `chapter_card` (`heroUnderlineMode` 爆款大字钩子) &rarr; `skill_editor_spotlight` (源码/Prompt 逐句聚光灯拆解) &rarr; `stack_slice_builder` (垂直功能切片积木堆叠) &rarr; `traffic_gate_box` / `deep_module_box` / `org_tree_radiate` (高耦合星型放射图) &rarr; `pipeline_timeline_flow` |
+| **`hands-on`** | 新产品 / 新模型第一时间上手实测 | `50% : 25% : 25%` | `chapter_card` (实测悬念) &rarr; `annotated_ui_tour` (`① ② ③` 三栏界面聚光灯导览) &rarr; `spotlight_window_tour` (聚光推镜+侧边取证卡) &rarr; `split_tree_chat_dispatch` (左树生长左移+右侧派工联动) &rarr; `matrix_compare` / `row_permission_table` |
 
 ---
 
@@ -24,8 +24,8 @@ At the empirically verified comfort cadence (`340~355` Chinese characters + Engl
 1. **Flexible Cold Open (`ch1_s1`) + Macro Chapter Reset Every `45~60s`**:
    - **Cold Open (`ch1_s1`) is NOT fixed**: Choose the best opening primitive for the story's strongest hook (`dot_matrix_stat` for shocking numbers, `live_web_showcase` for visual product reveal, `evidence_clip` for document/clause forensics, `persona_quote` for authority/founder thesis, `focus_hud_demo` for concrete UX pain points, or `chapter_card` for a sharp contrarian question).
    - **Chapter 2+ Reset**: Every chapter after Chapter 1 should open with a high-whitespace `chapter_card`, `persona_quote`, or `evidence_clip` posing a sharp conversational question (e.g., *"既然算力成本是零，为什么它首周流水还不到一千美金？"*), paired with `chapter_tail_pause_ms: 600` at the end of the preceding chapter so the viewer's brain gets a clean breath reset.
-2. **Zero Adjacent Primitive Repeats**:
-   Never use `flow_3node` twice in a row or `ranked_bars` twice in a row. Rotate across all 10 primitives (`build_video.py --lint-only` automatically audits this).
+2. **Zero Adjacent Primitive Repeats & `6-8-12` Canvas Copy Diet**:
+   Never use `flow_3node` twice in a row or `ranked_bars` twice in a row. Rotate across all 40 primitives (`build_video.py --lint-only` automatically audits adjacent repeats, zero-emoji compliance, and the `<= 45` CJK chars/scene `6-8-12` Minimal Copy Diet). Keep spoken explanations in `clauses` and put only distilled keywords/metrics on Remotion cards.
 3. **Dual Voice-Anchor Modulation (`mix` ↔ `zh`)**:
    - Use `"preset": "mix"` on technical mechanisms, live demos, code walkthroughs, and data comparisons (crisp, brisk rhythm).
    - Switch to `"preset": "zh"` on macro chapter openings, storytelling analogies, and final takeaways (deeper, calmer narrative gravitas).
