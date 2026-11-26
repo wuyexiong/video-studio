@@ -100,13 +100,17 @@ const TOKENS = {
   coralSoft: 'rgba(239, 83, 80, 0.11)',
   coralBorder: 'rgba(239, 83, 80, 0.45)',
   subtitleBg: 'rgba(15, 15, 16, 0.88)',
-  fontSans: '"Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", sans-serif',
-  fontMono: '"JetBrains Mono", "Noto Sans Mono CJK SC", "MesloLGS NF", ui-monospace, monospace',
+  fontSans: '"PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", -apple-system, sans-serif',
+  fontMono: '"SF Mono", "JetBrains Mono", "Menlo", "Noto Sans Mono CJK SC", ui-monospace, monospace',
 };
 
-const SPRING_SNAPPY = { damping: 24, stiffness: 175, mass: 0.88 };
-const SPRING_SILKY = { damping: 28, stiffness: 140, mass: 0.95 };
-const SPRING_BOUNCE = { damping: 17, stiffness: 195, mass: 0.78 };
+const SPRING_SNAPPY = { damping: 28, stiffness: 185, mass: 0.85, overshootClamping: true };
+const SPRING_SILKY = { damping: 32, stiffness: 145, mass: 0.92, overshootClamping: true };
+const SPRING_BOUNCE = { damping: 26, stiffness: 190, mass: 0.82, overshootClamping: true };
+
+function settle(p: number): number {
+  return p >= 0.995 ? 1 : p;
+}
 
 function formatRollingMetric(raw: string, progress: number): string {
   if (progress >= 0.99) return raw;
@@ -118,7 +122,7 @@ function formatRollingMetric(raw: string, progress: number): string {
       const decimals = match.split('.')[1]?.length || 1;
       return cur.toFixed(decimals);
     }
-    return String(Math.round(cur));
+    return String(Math.round(cur)).padStart(match.length, '0');
   });
 }
 
@@ -128,25 +132,25 @@ const SceneStageTransition: React.FC<{ durationInFrames: number; children: React
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const enterP = spring({ frame, fps, config: SPRING_SILKY });
+  const enterP = settle(spring({ frame, fps, config: SPRING_SILKY }));
   const exitFrames = 8;
-  const exitP =
-    durationInFrames > 20 && frame > durationInFrames - exitFrames
-      ? interpolate(frame, [durationInFrames - exitFrames, durationInFrames], [1, 0], {
-          extrapolateLeft: 'clamp',
-          extrapolateRight: 'clamp',
-          easing: Easing.in(Easing.cubic),
-        })
-      : 1;
-  const breathY = Math.sin(frame / 26) * 2.2;
-  const scale = interpolate(enterP, [0, 1], [0.976, 1]) * interpolate(exitP, [0, 1], [0.988, 1]);
-  const translateY = interpolate(enterP, [0, 1], [16, 0]) + breathY;
+  const isExiting = durationInFrames > 20 && frame > durationInFrames - exitFrames;
+  const exitP = isExiting
+    ? interpolate(frame, [durationInFrames - exitFrames, durationInFrames], [1, 0], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp',
+        easing: Easing.in(Easing.cubic),
+      })
+    : 1;
+  const isStationary = enterP === 1 && !isExiting;
+  const scale = interpolate(enterP, [0, 1], [0.985, 1]) * interpolate(exitP, [0, 1], [0.99, 1]);
+  const translateY = interpolate(enterP, [0, 1], [14, 0]);
 
   return (
     <AbsoluteFill
       style={{
         opacity: Math.min(enterP, exitP),
-        transform: `translateY(${translateY}px) scale(${scale})`,
+        transform: isStationary ? 'none' : `translate3d(0, ${translateY.toFixed(2)}px, 0) scale(${scale.toFixed(4)})`,
       }}
     >
       {children}
@@ -193,7 +197,7 @@ const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const d = scene.data || {};
   if (!d.topPill && !d.topTitle) return null;
 
-  const enter = spring({ frame, fps, config: SPRING_SNAPPY });
+  const enter = settle(spring({ frame, fps, config: SPRING_SNAPPY }));
   const accentPal = tonePalette(d.topAccentTone || 'amber');
   const titleStr = String(d.topTitle || '');
   const accentWord = String(d.topAccentWord || '');
@@ -225,7 +229,7 @@ const SceneThesisHeader: React.FC<{ scene: StudioScene }> = ({ scene }) => {
         gap: 14,
         zIndex: 40,
         opacity: enter,
-        transform: `translateY(${interpolate(enter, [0, 1], [-14, 0])}px)`,
+        transform: enter === 1 ? 'none' : `translate3d(0, ${interpolate(enter, [0, 1], [-14, 0]).toFixed(2)}px, 0)`,
         pointerEvents: 'none',
       }}
     >
@@ -553,7 +557,7 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                       fontWeight: 700,
                       color: isSpotlight ? TOKENS.amber : TOKENS.ink,
                       opacity: p,
-                      transform: `translateX(${interpolate(p, [0, 1], [18, 0])}px) scale(${isSpotlight ? 1.03 : 1})`,
+                      transform: p >= 0.995 ? 'none' : `translate3d(${interpolate(p, [0, 1], [18, 0]).toFixed(2)}px, 0, 0)`,
                     }}
                   >
                     {b}
@@ -573,9 +577,10 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                 borderRadius: 18,
                 padding: '30px 34px',
                 opacity: badges.length ? quoteEnter : shift,
-                transform: `translateY(${interpolate(badges.length ? quoteEnter : shift, [0, 1], [22, 0])}px) scale(${
-                  activeClause >= 2 ? 1.015 : 1
-                })`,
+                transform:
+                  (badges.length ? quoteEnter : shift) >= 0.995
+                    ? 'none'
+                    : `translate3d(0, ${interpolate(badges.length ? quoteEnter : shift, [0, 1], [22, 0]).toFixed(2)}px, 0)`,
                 boxShadow: activeClause >= 2 ? '0 24px 56px rgba(0,0,0,0.48), 0 0 28px rgba(245, 158, 11, 0.12)' : '0 16px 40px rgba(0,0,0,0.32)',
               }}
             >
@@ -742,7 +747,7 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                       fontSize: 20,
                       fontWeight: 700,
                       opacity: bP,
-                      transform: `translateY(${interpolate(bP, [0, 1], [14, 0])}px) scale(${isFocused ? 1.04 : 1})`,
+                      transform: bP >= 0.995 ? 'none' : `translate3d(0, ${interpolate(bP, [0, 1], [14, 0]).toFixed(2)}px, 0)`,
                       boxShadow: isFocused ? `0 8px 22px rgba(0,0,0,0.32)` : 'none',
                     }}
                   >
@@ -799,14 +804,17 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                 style={{
                   width: Math.min(430, Math.floor(1520 / Math.max(2, nodes.length))),
                   background: isHighlight ? pal.bg : TOKENS.card,
-                  border: `${isFocused ? '2px' : '1.5px'} solid ${isHighlight ? pal.fg : TOKENS.border}`,
+                  border: `2px solid ${isHighlight ? pal.fg : TOKENS.border}`,
                   borderLeft: idx === 0 && !isHighlight ? `4px solid ${TOKENS.amber}` : undefined,
                   borderRadius: 18,
                   padding: '26px 28px',
                   opacity: isRevealed ? (isFocused || activeClause >= nodes.length ? enter : enter * 0.68) : 0.08,
-                  transform: `translateY(${interpolate(enter, [0, 1], [22, isFocused ? -6 : 0])}px) scale(${
-                    isFocused ? interpolate(focusP, [0, 1], [0.98, 1.03]) : 0.985
-                  })`,
+                  transform:
+                    enter >= 0.995
+                      ? isFocused
+                        ? 'translate3d(0, -4px, 0)'
+                        : 'none'
+                      : `translate3d(0, ${interpolate(enter, [0, 1], [20, isFocused ? -4 : 0]).toFixed(2)}px, 0)`,
                   boxShadow: isFocused
                     ? `0 24px 54px rgba(0,0,0,0.48), 0 0 26px ${pal.bg}`
                     : '0 12px 30px rgba(0,0,0,0.25)',
@@ -918,9 +926,12 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                 background: isFocused ? 'rgba(255,255,255,0.025)' : 'transparent',
                 border: `1.5px solid ${isFocused ? pal.border : 'rgba(255,255,255,0.05)'}`,
                 opacity: enter * (isFocused ? 1 : 0.54),
-                transform: `translateY(${interpolate(enter, [0, 1], [24, isFocused ? -6 : 2])}px) scale(${
-                  isFocused ? 1.018 : 0.985
-                })`,
+                transform:
+                  enter >= 0.995
+                    ? isFocused
+                      ? 'translate3d(0, -4px, 0)'
+                      : 'none'
+                    : `translate3d(0, ${interpolate(enter, [0, 1], [22, isFocused ? -4 : 0]).toFixed(2)}px, 0)`,
                 boxShadow: isFocused ? '0 24px 56px rgba(0,0,0,0.42)' : 'none',
               }}
             >
@@ -1085,7 +1096,7 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'relative', flexShrink: 0 }}>
               <span
                 style={{
-                  minWidth: 118,
+                  minWidth: 142,
                   textAlign: 'center',
                   whiteSpace: 'nowrap',
                   padding: '9px 22px',
@@ -1096,7 +1107,6 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                   fontFamily: TOKENS.fontMono,
                   fontSize: 19,
                   fontWeight: 800,
-                  transform: `scale(${isClicked ? 1.04 : isHovering ? 1.03 : 1})`,
                   boxShadow: isClicked ? '0 0 20px rgba(52, 211, 153, 0.45)' : 'none',
                 }}
               >
@@ -1311,16 +1321,24 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
                   color,
                   background: isCurrentActive ? TOKENS.amberSoft : 'transparent',
                   borderLeft: isCurrentActive ? `3.5px solid ${TOKENS.amber}` : '3.5px solid transparent',
-                  padding: isCurrentActive ? '10px 16px' : '4px 16px',
+                  padding: '8px 16px',
                   borderRadius: 8,
                   opacity: isCurrentActive ? 1 : isPast ? 0.65 : p * 0.25,
-                  transform: `translateX(${interpolate(p, [0, 1], [16, isCurrentActive ? 6 : 0])}px) scale(${isCurrentActive ? 1.012 : 1})`,
+                  transform: p >= 0.995 ? 'none' : `translate3d(${interpolate(p, [0, 1], [16, 0]).toFixed(2)}px, 0, 0)`,
                 }}
               >
                 {ln.text.slice(0, charsToShow)}
-                {(typeP < 1 || (isCurrentActive && frame % 18 < 10)) && frame >= startF && (
-                  <span style={{ display: 'inline-block', width: 10, height: 22, background: color, marginLeft: 5, verticalAlign: 'middle' }} />
-                )}
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: 10,
+                    height: 22,
+                    background: color,
+                    marginLeft: 5,
+                    verticalAlign: 'middle',
+                    opacity: (typeP < 1 || (isCurrentActive && frame % 18 < 10)) && frame >= startF ? 1 : 0,
+                  }}
+                />
               </div>
             );
           })}
@@ -1370,11 +1388,11 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
               key={idx}
               style={{
                 background: isFocused ? TOKENS.cardElevated : TOKENS.card,
-                border: `${isFocused ? '1.5px' : '1px'} solid ${isFocused ? pal.fg : TOKENS.border}`,
+                border: `1.5px solid ${isFocused ? pal.fg : TOKENS.border}`,
                 borderRadius: 16,
                 padding: '18px 24px',
                 opacity: p * (isFocused || activeClause >= bars.length - 1 ? 1 : 0.72),
-                transform: `translateX(${interpolate(p, [0, 1], [-18, isFocused ? 6 : 0])}px) scale(${isFocused ? 1.016 : 1})`,
+                transform: p >= 0.995 ? 'none' : `translate3d(${interpolate(p, [0, 1], [-18, 0]).toFixed(2)}px, 0, 0)`,
                 boxShadow: isFocused ? '0 18px 44px rgba(0,0,0,0.38)' : 'none',
               }}
             >
@@ -1457,7 +1475,7 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                   fontSize: 25,
                   lineHeight: 1.55,
                   color: isFocused ? '#111113' : '#3F3F46',
-                  fontWeight: isFocused ? 700 : 500,
+                  fontWeight: 600,
                   background: isFocused
                     ? `linear-gradient(90deg, rgba(245, 158, 11, 0.34) ${hiProgress * 100}%, rgba(0,0,0,0.03) ${hiProgress * 100}%)`
                     : 'transparent',
@@ -1465,7 +1483,7 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                   padding: '8px 14px',
                   borderRadius: 8,
                   opacity: isFocused ? 1 : isPast ? 0.54 : interpolate(itemP, [0, 1], [0.22, 0.42]),
-                  transform: `translateX(${isFocused ? 8 : 0}px) scale(${isFocused ? 1.012 : 1})`,
+                  transform: 'none',
                 }}
               >
                 {ex.text}
@@ -1567,12 +1585,12 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 24,
-                  padding: isCurrentFocus ? '18px 24px' : '12px 20px',
+                  padding: '15px 22px',
                   borderRadius: 14,
                   background: isCurrentFocus ? pal.bg : 'rgba(255,255,255,0.02)',
                   border: `1.5px solid ${isCurrentFocus ? pal.border : 'rgba(255,255,255,0.06)'}`,
                   opacity: isRevealed ? (isCurrentFocus ? 1 : 0.46) : 0.12,
-                  transform: `scale(${isCurrentFocus ? interpolate(p, [0, 1], [0.98, 1.015]) : 0.99})`,
+                  transform: 'none',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1 }}>
@@ -1589,9 +1607,17 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
                   </span>
                   <div style={{ fontFamily: TOKENS.fontMono, fontSize: 23, fontWeight: 600, color: TOKENS.ink, lineHeight: 1.4 }}>
                     {isRevealed ? it.code.slice(0, charsToShow) : '........................................................'}
-                    {isCurrentFocus && typeP < 1 && (
-                      <span style={{ display: 'inline-block', width: 11, height: 22, background: pal.fg, marginLeft: 4, verticalAlign: 'middle' }} />
-                    )}
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: 11,
+                        height: 22,
+                        background: pal.fg,
+                        marginLeft: 4,
+                        verticalAlign: 'middle',
+                        opacity: isCurrentFocus && typeP < 1 ? 1 : 0,
+                      }}
+                    />
                   </div>
                 </div>
 
@@ -1607,7 +1633,7 @@ const PrimitiveSkillEditorSpotlight: React.FC<{ scene: StudioScene }> = ({ scene
                       fontWeight: 800,
                       whiteSpace: 'nowrap',
                       opacity: p,
-                      transform: `translateX(${interpolate(p, [0, 1], [18, 0])}px)`,
+                      transform: p >= 0.995 ? 'none' : `translate3d(${interpolate(p, [0, 1], [18, 0]).toFixed(2)}px, 0, 0)`,
                       boxShadow: isCurrentFocus ? '0 8px 24px rgba(0,0,0,0.35)' : 'none',
                     }}
                   >
@@ -2018,16 +2044,20 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                         padding: '0 18px',
                         borderRadius: 14,
                         background: cStyle.bg,
-                        border: `${isCurrentBeat ? '3px' : '2px'} solid ${isCurrentBeat ? '#FFFFFF' : cStyle.border}`,
+                        border: `2.5px solid ${isCurrentBeat ? '#FFFFFF' : cStyle.border}`,
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
                         gap: 4,
                         opacity: isShown ? (isCurrentBeat ? 1 : 0.76) : 0.08,
-                        transform: `translateY(${isShown ? interpolate(lp, [0, 1], [28, isCurrentBeat ? -4 : 0]) : 22}px) scale(${
-                          isShown ? (isCurrentBeat ? 1.035 : 0.99) : 0.92
-                        })`,
+                        transform: isShown
+                          ? lp >= 0.995
+                            ? isCurrentBeat
+                              ? 'translate3d(0, -3px, 0)'
+                              : 'none'
+                            : `translate3d(0, ${interpolate(lp, [0, 1], [24, isCurrentBeat ? -3 : 0]).toFixed(2)}px, 0)`
+                          : 'translate3d(0, 22px, 0)',
                         boxShadow: isCurrentBeat
                           ? `0 0 28px ${cStyle.border}, 0 16px 36px rgba(0,0,0,0.45)`
                           : '0 10px 26px rgba(0,0,0,0.28)',
@@ -2551,7 +2581,7 @@ const PrimitiveAnnotatedUiTour: React.FC<{ scene: StudioScene }> = ({ scene }) =
                 flexDirection: 'column',
                 gap: 16,
                 opacity: isLit ? 1 : isVisited ? 0.42 : 0.22,
-                transform: `scale(${isLit ? interpolate(zp, [0, 1], [0.97, 1.015]) : 0.985})`,
+                transform: isLit ? 'translate3d(0, -4px, 0)' : 'none',
                 boxShadow: isLit ? '0 0 36px rgba(245, 158, 11, 0.22)' : 'none',
               }}
             >
@@ -3538,14 +3568,29 @@ export const StudioVideo: React.FC<{
   const globalCurSec = payload.chapterStartOffsetSec + curSec;
   const globalPct = Math.min(100, (globalCurSec / Math.max(0.1, payload.globalTotalDurationSec)) * 100);
 
-  const activeCaption = payload.captions.find(
-    (c) => curSec >= c.start - 0.04 && curSec <= c.end + 0.14
-  );
+  // Prefer the most recently started caption so trailing +0.10s hold never delays the next clause's entrance
+  let activeCaption: ClauseTiming | undefined;
+  for (let i = payload.captions.length - 1; i >= 0; i--) {
+    const c = payload.captions[i];
+    if (curSec >= c.start - 0.02 && curSec <= c.end + 0.10) {
+      activeCaption = c;
+      break;
+    }
+  }
 
   const chapIdxStr = `${String(payload.chapterIndex).padStart(2, '0')} / ${String(payload.totalChapters).padStart(2, '0')}`;
 
   return (
-    <AbsoluteFill style={{ backgroundColor: TOKENS.canvas, fontFamily: TOKENS.fontSans, color: TOKENS.ink }}>
+    <AbsoluteFill
+      style={{
+        backgroundColor: TOKENS.canvas,
+        fontFamily: TOKENS.fontSans,
+        color: TOKENS.ink,
+        fontVariantNumeric: 'tabular-nums',
+        WebkitFontSmoothing: 'antialiased',
+        textRendering: 'geometricPrecision',
+      }}
+    >
       {payload.audioFile ? <Audio src={staticFile(payload.audioFile)} /> : null}
 
       {/* Continuous Global 3px Top Amber Progress Bar (Seamless across multi-chapter 10-min videos!) */}
@@ -3617,10 +3662,13 @@ export const StudioVideo: React.FC<{
         );
       })}
 
-      {/* Editorial Dark Matte Subtitle Pill with Clause Entrance Spring */}
+      {/* Editorial Dark Matte Subtitle Pill (Zero Subpixel Vertical Creep) */}
       {activeCaption && (() => {
-        const capLocalFrame = Math.max(0, Math.round((curSec - activeCaption.start) * fps));
-        const capEnter = spring({ frame: capLocalFrame, fps, config: SPRING_SILKY });
+        const capLocalFrame = Math.max(0, frame - Math.round(activeCaption.start * fps));
+        const capFade = interpolate(capLocalFrame, [0, 5], [0.55, 1], {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+        });
         return (
           <div
             style={{
@@ -3647,8 +3695,8 @@ export const StudioVideo: React.FC<{
                 boxShadow: '0 10px 28px rgba(0,0,0,0.38)',
                 maxWidth: '74%',
                 textAlign: 'center',
-                opacity: interpolate(capEnter, [0, 1], [0.4, 1]),
-                transform: `translateY(${interpolate(capEnter, [0, 1], [7, 0])}px)`,
+                opacity: capFade,
+                transform: 'none',
               }}
             >
               {activeCaption.displayText}
