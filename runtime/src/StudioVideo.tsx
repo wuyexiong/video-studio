@@ -4097,22 +4097,22 @@ const PrimitiveSynergyPuzzlePair: React.FC<{ scene: StudioScene }> = ({ scene })
           <div
             style={{
               position: 'relative',
-              width: 560,
+              width: 552,
               height: 360,
               opacity: leftP,
               transform: `translateX(${-halfGap}px)`,
               zIndex: 2,
             }}
           >
-            <svg width={610} height={360} viewBox="0 0 610 360" style={{ position: 'absolute', left: 0, top: 0 }}>
+            <svg width={600} height={360} viewBox="0 0 600 360" style={{ position: 'absolute', left: 0, top: 0 }}>
               <path
-                d="M 22 4 H 538 Q 556 4 556 22 V 142 A 38 38 0 1 1 556 218 V 338 Q 556 356 538 356 H 22 Q 4 356 4 338 V 22 Q 4 4 22 4 Z"
+                d="M 22 4 H 534 Q 552 4 552 22 V 142 A 38 38 0 1 1 552 218 V 338 Q 552 356 534 356 H 22 Q 4 356 4 338 V 22 Q 4 4 22 4 Z"
                 fill="#443019"
                 stroke={TOKENS.amber}
                 strokeWidth="3"
               />
             </svg>
-            <div style={{ position: 'relative', width: 540, height: '100%', padding: '38px 42px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, textAlign: 'center' }}>
+            <div style={{ position: 'relative', width: 536, height: '100%', padding: '38px 42px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, textAlign: 'center' }}>
               <div style={{ fontFamily: TOKENS.fontMono, fontSize: 22, fontWeight: 800, color: TOKENS.amber }}>
                 {d.leftTag || 'MODULE A · DISPATCH'}
               </div>
@@ -4133,7 +4133,7 @@ const PrimitiveSynergyPuzzlePair: React.FC<{ scene: StudioScene }> = ({ scene })
           >
             <svg width={560} height={360} viewBox="0 0 560 360" style={{ position: 'absolute', left: 0, top: 0 }}>
               <path
-                d="M 4 4 H 538 Q 556 4 556 22 V 338 Q 556 356 538 356 H 4 V 218 A 38 38 0 1 0 4 142 Z"
+                d="M 0 22 Q 0 4 18 4 H 538 Q 556 4 556 22 V 338 Q 556 356 538 356 H 18 Q 0 356 0 338 V 218 A 38 38 0 1 0 0 142 Z"
                 fill={TOKENS.slateFill}
                 stroke={TOKENS.slateLight}
                 strokeWidth="3"
