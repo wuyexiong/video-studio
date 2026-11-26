@@ -69,12 +69,13 @@ Key authoring rules for **3~15 Minute Long Videos**:
 ### Step 3: Run Master Build Engine (Audio + Alignment + Capture + Render + Stitch)
 Run [build_video.py](./scripts/build_video.py) (`BypassSandbox: true` required for Metal GPU `Qwen3-ForcedAligner`, localhost `9880` VoiceClone API, and Chrome headless renderer):
 
-- **Mode A — Personal Cloned Voice (Default, `127.0.0.1:9880`)**:
+- **Mode A — Multi-Voice Cloned Voice (Default `hahaxiong`, or `--voice female_01` via `/Users/hahaxiong/Toos/VoiceClone/voices/registry.json` on `127.0.0.1:9880`)**:
   ```bash
   /opt/homebrew/Cellar/rapid-mlx/1.0.2/libexec/bin/python \
     /Users/hahaxiong/.gemini/config/skills/video-studio/scripts/build_video.py \
     --project ./video_project.json \
-    --out-dir ./video_output
+    --out-dir ./video_output \
+    --voice hahaxiong
   ```
 - **Mode B — Raw Human Voice Recording Passthrough (`.wav/.m4a`)**:
   ```bash

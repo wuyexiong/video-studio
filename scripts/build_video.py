@@ -23,6 +23,8 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -39,24 +41,165 @@ REMOTION_BIN = RUNTIME_DIR / "node_modules" / ".bin" / "remotion"
 CHROME_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 
-PROMPT_DIR = Path("/Users/hahaxiong/Toos/VoiceClone/my_voice_Workspace/04_reference_prompt")
+VOICE_CLONE_ROOT = Path("/Users/hahaxiong/Toos/VoiceClone")
+VOICE_REGISTRY_PATH = VOICE_CLONE_ROOT / "voices" / "registry.json"
+PROMPT_DIR = VOICE_CLONE_ROOT / "voices" / "hahaxiong" / "04_reference_prompt"
 VOICE_PRESETS = {
     "mix": (
-        str(PROMPT_DIR / "myvoice_best_mix.wav"),
+        str(PROMPT_DIR / "myvoice_v2_best_mix.wav"),
         "做海外 SaaS 产品的时候，我一般会先花一天时间写好一个清爽的 Landing Page。",
         "zh",
     ),
     "zh": (
-        str(PROMPT_DIR / "myvoice_best_zh.wav"),
+        str(PROMPT_DIR / "myvoice_v2_best_zh.wav"),
         "真正聪明的创作者，懂得把重复枯燥的体力活全部交给自动化流程去处理。",
         "zh",
     ),
     "en": (
-        str(PROMPT_DIR / "myvoice_best_en.wav"),
+        str(PROMPT_DIR / "myvoice_v2_best_en.wav"),
         "Everything runs right on my MacBook, so your data stays safe and private.",
         "en",
     ),
 }
+_ACTIVE_SERVER_WEIGHTS: tuple[str, str] | None = None
+
+
+def resolve_voice_aux_refs(vcfg: dict) -> list[str]:
+    """Resolve auxiliary reference audio paths from voices/registry.json for multi-ref tone locking."""
+    resolved = []
+    for raw_p in vcfg.get("aux_ref_audio_paths", []) or []:
+        if not raw_p:
+            continue
+        abs_p = Path(raw_p) if os.path.isabs(raw_p) else (VOICE_CLONE_ROOT / raw_p).resolve()
+        if abs_p.is_file():
+            resolved.append(str(abs_p))
+    return resolved
+
+
+def load_voice_registry() -> dict:
+    if VOICE_REGISTRY_PATH.is_file():
+        return json.loads(VOICE_REGISTRY_PATH.read_text(encoding="utf-8"))
+    return {
+        "default_voice": "hahaxiong",
+        "voices": {
+            "hahaxiong": {
+                "name": "哈哈熊（主力男声）",
+                "gender": "male",
+                "status": "ready",
+                "aliases": ["hahaxiong", "my_voice", "my_voice_v2", "male", "default", "我", "我的声音", "男声", "默认"],
+                "gpt_weights": "GPT_weights_v2ProPlus/my_voice_v2-e15.ckpt",
+                "sovits_weights": "SoVITS_weights_v2ProPlus/my_voice_v2_e12_s120.pth",
+                "default_preset": "mix",
+                "aux_ref_audio_paths": [
+                    str(PROMPT_DIR / "myvoice_v2_aux_01.wav"),
+                    str(PROMPT_DIR / "myvoice_v2_aux_02.wav"),
+                    str(PROMPT_DIR / "myvoice_v2_aux_03.wav"),
+                ],
+                "presets": {
+                    k: {"ref_audio_path": v[0], "prompt_text": v[1], "prompt_lang": v[2]}
+                    for k, v in VOICE_PRESETS.items()
+                },
+            }
+        },
+    }
+
+
+def resolve_voice_entry(query: str | None = None, reg: dict | None = None) -> tuple[str, dict]:
+    reg = reg or load_voice_registry()
+    voices = reg.get("voices", {})
+    target = (query or reg.get("default_voice") or "hahaxiong").strip()
+    if target in voices:
+        return target, voices[target]
+    t_low = target.lower()
+    for vid, vcfg in voices.items():
+        if vid.lower() == t_low or t_low in [a.lower() for a in vcfg.get("aliases", [])]:
+            return vid, vcfg
+    avail = ", ".join(f"{k} ({'/'.join(v.get('aliases', [])[:3])})" for k, v in voices.items())
+    raise ValueError(f"Unknown voice '{target}'. Registered voices in {VOICE_REGISTRY_PATH}: {avail}")
+
+
+def resolve_voice_preset(
+    voice_query: str | None,
+    preset_query: str | None,
+    reg: dict | None = None,
+) -> tuple[str, dict, str, str, str, str]:
+    """
+    Resolve (voice_id, voice_cfg, effective_preset_key, ref_wav_abs, prompt_text, prompt_lang)
+    with automatic preset fallback if a secondary voice only configured 'mix'.
+    """
+    vid, vcfg = resolve_voice_entry(voice_query, reg)
+    presets = vcfg.get("presets", {})
+    req_p = (preset_query or vcfg.get("default_preset") or "mix").strip()
+
+    order = [req_p]
+    if "mix" not in order:
+        order.append("mix")
+    for k in presets.keys():
+        if k not in order:
+            order.append(k)
+
+    for cand in order:
+        if cand not in presets:
+            continue
+        p_obj = presets[cand]
+        raw_p = p_obj.get("ref_audio_path", "")
+        abs_p = Path(raw_p) if os.path.isabs(raw_p) else (VOICE_CLONE_ROOT / raw_p).resolve()
+        if abs_p.is_file():
+            if cand != req_p:
+                print(f"[VoiceClone] Preset '{req_p}' not configured for voice '{vid}'; falling back to '{cand}'.")
+            return vid, vcfg, cand, str(abs_p), p_obj.get("prompt_text", ""), p_obj.get("prompt_lang", "zh")
+
+    # If no preset file exists on disk yet
+    p_obj = presets.get(req_p) or next(iter(presets.values()))
+    raw_p = p_obj.get("ref_audio_path", "")
+    abs_p = Path(raw_p) if os.path.isabs(raw_p) else (VOICE_CLONE_ROOT / raw_p).resolve()
+    return vid, vcfg, req_p, str(abs_p), p_obj.get("prompt_text", ""), p_obj.get("prompt_lang", "zh")
+
+
+def ensure_voice_weights_on_server(vid: str, vcfg: dict) -> None:
+    global _ACTIVE_SERVER_WEIGHTS
+    gpt_rel = vcfg.get("gpt_weights", "")
+    sov_rel = vcfg.get("sovits_weights", "")
+    pair = (gpt_rel, sov_rel)
+    if _ACTIVE_SERVER_WEIGHTS == pair:
+        return
+
+    gpt_abs = (VOICE_CLONE_ROOT / gpt_rel).resolve()
+    sov_abs = (VOICE_CLONE_ROOT / sov_rel).resolve()
+    if not gpt_abs.is_file() or not sov_abs.is_file():
+        raise FileNotFoundError(
+            f"Voice '{vid}' ({vcfg.get('name')}) weights not found on disk yet:\n"
+            f"  GPT   : {gpt_abs} ({'OK' if gpt_abs.is_file() else 'MISSING'})\n"
+            f"  SoVITS: {sov_abs} ({'OK' if sov_abs.is_file() else 'MISSING'})\n"
+            f"Train '{vid}' in WebUI first, then run: /Users/hahaxiong/Toos/VoiceClone/3_test_tts.py --bind-voice {vid}"
+        )
+
+    for ep, w_rel, label in [
+        ("/set_gpt_weights", gpt_rel, "GPT"),
+        ("/set_sovits_weights", sov_rel, "SoVITS"),
+    ]:
+        url = f"http://127.0.0.1:9880{ep}?weights_path={urllib.parse.quote(w_rel)}"
+        with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=60) as resp:
+            body = json.loads(resp.read().decode("utf-8", errors="replace"))
+            if not body.get("skipped", False):
+                print(f"[VoiceClone] Hot-swapped {label} weights for '{vid}' -> {w_rel}")
+    _ACTIVE_SERVER_WEIGHTS = pair
+
+
+def normalize_clause_rms(wav_arr: np.ndarray, target_rms: float = 0.085) -> np.ndarray:
+    """Balance per-clause active-speech RMS across different speaker models (e.g. male + female dialogue)."""
+    if len(wav_arr) == 0:
+        return wav_arr
+    active = wav_arr[np.abs(wav_arr) > 0.008]
+    cur_rms = float(np.sqrt(np.mean(active ** 2))) if len(active) > 64 else float(np.sqrt(np.mean(wav_arr ** 2)))
+    if cur_rms < 1e-4:
+        return wav_arr
+    gain = np.clip(target_rms / cur_rms, 0.45, 2.40)
+    scaled = wav_arr * float(gain)
+    peak = float(np.max(np.abs(scaled)))
+    if peak > 0.90:
+        scaled = scaled * (0.90 / peak)
+    return scaled.astype(np.float32)
 
 VALID_PRIMITIVES = {
     "chapter_card",
@@ -97,11 +240,18 @@ NUMBER_CHARS = set(
 )
 
 
-def lint_project(proj: dict, strict_sync: bool = False) -> list[str]:
+def lint_project(proj: dict, strict_sync: bool = False, voice_override: str | None = None) -> list[str]:
     warnings = []
     chapters = proj.get("chapters", [])
     if not chapters:
         raise ValueError("Project JSON must contain non-empty 'chapters' array.")
+
+    reg = load_voice_registry()
+    top_voice = voice_override or proj.get("default_voice") or proj.get("voice")
+    if top_voice:
+        vid, vcfg = resolve_voice_entry(top_voice, reg)
+        if not (VOICE_CLONE_ROOT / vcfg.get("gpt_weights", "")).is_file():
+            warnings.append(f"[Voice Pending] Default voice '{vid}' weights are not trained yet ({vcfg.get('gpt_weights')}).")
 
     prev_prim = None
     for c_idx, ch in enumerate(chapters, 1):
@@ -111,6 +261,10 @@ def lint_project(proj: dict, strict_sync: bool = False) -> list[str]:
                 f"[Chapter {c_idx}] Has {len(scenes)} scenes (>12). Split into 45-60s chapters for faster incremental rendering."
             )
         for sc in scenes:
+            if sc.get("voice"):
+                svid, svcfg = resolve_voice_entry(sc.get("voice"), reg)
+                if not (VOICE_CLONE_ROOT / svcfg.get("gpt_weights", "")).is_file():
+                    warnings.append(f"[Voice Pending] Scene '{sc.get('id')}' uses untrained voice '{svid}'.")
             prim = sc.get("primitive")
             if prim not in VALID_PRIMITIVES:
                 raise ValueError(f"Scene '{sc.get('id')}' uses unknown primitive '{prim}'. Valid: {sorted(VALID_PRIMITIVES)}")
@@ -230,15 +384,28 @@ def is_healthy_clause_audio(wav_arr: np.ndarray, sr: int, chars: list, n_units: 
     return True, "ok"
 
 
-def synth_and_align_clause(tts_text: str, preset: str, speed: float, cache_dir: Path, aligner) -> tuple[Path, float, list]:
+def synth_and_align_clause(
+    tts_text: str,
+    preset: str,
+    speed: float,
+    cache_dir: Path,
+    aligner,
+    voice: str | None = None,
+    reg: dict | None = None,
+) -> tuple[Path, float, list, str, str]:
     """
-    Aligner-Guided + Acoustic-Bounded Exact Trim & Timestamping (v4 with Silence Auto-Retry):
-    1. Validate existing cache against silence/truncation poisoning; auto-purge if unhealthy.
-    2. Up to 4 synthesis attempts with progressive sampling stabilization if GPT-SoVITS hits early EOS or silence.
-    3. Union Qwen3-ForcedAligner [first_st, last_ed] with real acoustic voice activity [ac_on, ac_off]
-       so genuine spoken syllables are never chopped off by aligner boundary compression.
+    Aligner-Guided + Acoustic-Bounded Exact Trim & Timestamping (v4 Multi-Voice + Silence Auto-Retry):
+    1. Resolves voice ID, model weight signature, and preset reference audio from voices/registry.json.
+    2. Includes voice_id + weight filenames in cache key so re-training (v1 -> v2) or switching speakers
+       automatically invalidates stale caches.
+    3. Hot-swaps GPT & SoVITS weights on 127.0.0.1:9880 idempotently before synthesis.
+    4. Balances per-clause RMS so multi-speaker (male + female) chapters have uniform loudness.
     """
-    key = sha256_str(f"v3_align_trim|{preset}|{speed:.3f}|{tts_text}")
+    vid, vcfg, eff_preset, ref_wav_init, _, _ = resolve_voice_preset(voice, preset, reg)
+    aux_refs = resolve_voice_aux_refs(vcfg)
+    aux_sig = ",".join(Path(p).name for p in aux_refs)
+    weight_sig = f"{vid}|{vcfg.get('gpt_weights', '')}|{vcfg.get('sovits_weights', '')}|{Path(ref_wav_init).name}|{aux_sig}"
+    key = sha256_str(f"v5_steady_aux|{weight_sig}|{eff_preset}|{speed:.3f}|{tts_text}")
     wav_cache = cache_dir / f"clause_{key}.wav"
     json_cache = cache_dir / f"clause_{key}.json"
     n_units = max(1, count_units(tts_text))
@@ -250,32 +417,40 @@ def synth_and_align_clause(tts_text: str, preset: str, speed: float, cache_dir: 
             cached_wav, cached_sr = sf.read(str(wav_cache), dtype="float32")
             ok, reason = is_healthy_clause_audio(cached_wav, cached_sr, meta.get("chars", []), n_units)
             if ok:
-                return wav_cache, float(meta["duration"]), meta["chars"]
+                return wav_cache, float(meta["duration"]), meta["chars"], vid, eff_preset
             print(f"[VoiceClone Guard] Purging unhealthy cached clause ({reason}): {tts_text}")
         except Exception:
             pass
         wav_cache.unlink(missing_ok=True)
         json_cache.unlink(missing_ok=True)
 
-    # 4-tier retry schedule to defeat stochastic GPT-SoVITS attention/EOS collapse
+    ensure_voice_weights_on_server(vid, vcfg)
+
+    # 4-tier steady-state retry schedule: locked to eff_preset (no cross-preset switching!)
+    eos_punct = "." if eff_preset == "en" else "。"
+    punct_text = tts_text.rstrip("，,；; ") + ("" if tts_text.rstrip().endswith(("。", "！", "？", ".", "!", "?")) else eos_punct)
     retry_configs = [
-        {"preset": preset, "temp": 0.90, "top_p": 0.95, "top_k": 15, "split": "cut5", "parallel": True, "text": tts_text},
-        {"preset": preset, "temp": 0.75, "top_p": 0.90, "top_k": 12, "split": "cut0", "parallel": False, "text": tts_text.rstrip("，,；; ") + "。"},
-        {"preset": "mix",  "temp": 0.80, "top_p": 0.92, "top_k": 15, "split": "cut0", "parallel": False, "text": tts_text.rstrip("，,；; ") + "。"},
-        {"preset": "mix",  "temp": 0.65, "top_p": 0.85, "top_k": 10, "split": "cut5", "parallel": False, "text": tts_text},
+        {"preset": eff_preset, "temp": 0.75, "top_p": 0.88, "top_k": 15, "split": "cut5", "parallel": True,  "text": tts_text},
+        {"preset": eff_preset, "temp": 0.70, "top_p": 0.85, "top_k": 12, "split": "cut0", "parallel": False, "text": punct_text},
+        {"preset": eff_preset, "temp": 0.65, "top_p": 0.82, "top_k": 12, "split": "cut5", "parallel": False, "text": punct_text},
+        {"preset": eff_preset, "temp": 0.60, "top_p": 0.80, "top_k": 10, "split": "cut0", "parallel": False, "text": tts_text},
     ]
 
     clipped = np.zeros(int(0.5 * sr), dtype=np.float32)
     chars = []
 
     for attempt_idx, cfg in enumerate(retry_configs, 1):
-        cur_preset = cfg["preset"]
-        ref_wav, ref_txt, ref_lang = VOICE_PRESETS[cur_preset]
+        _, _, cur_preset, ref_wav, ref_txt, ref_lang = resolve_voice_preset(vid, cfg["preset"], reg)
+        if not os.path.isfile(ref_wav):
+            raise FileNotFoundError(
+                f"Reference audio for voice '{vid}' preset '{cur_preset}' does not exist: {ref_wav}"
+            )
         resolved_lang = "en" if cur_preset == "en" else "zh"
         payload = {
             "text": cfg["text"],
             "text_lang": resolved_lang,
             "ref_audio_path": ref_wav,
+            "aux_ref_audio_paths": aux_refs,
             "prompt_text": ref_txt,
             "prompt_lang": ref_lang,
             "top_k": cfg["top_k"],
@@ -366,10 +541,14 @@ def synth_and_align_clause(tts_text: str, preset: str, speed: float, cache_dir: 
             break
         print(f"[VoiceClone Guard] Attempt #{attempt_idx} unhealthy ({reason}) for '{tts_text}' -> retrying...")
 
+    clipped = normalize_clause_rms(clipped, target_rms=0.085)
     sf.write(str(wav_cache), clipped, sr, subtype="PCM_16")
     dur = round(len(clipped) / float(sr), 3)
-    json_cache.write_text(json.dumps({"duration": dur, "chars": chars}, ensure_ascii=False), encoding="utf-8")
-    return wav_cache, dur, chars
+    json_cache.write_text(
+        json.dumps({"duration": dur, "chars": chars, "voice": vid, "preset": eff_preset}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return wav_cache, dur, chars, vid, eff_preset
 
 
 def make_warm_sfx(kind: str, sr: int = 48000) -> np.ndarray:
@@ -387,10 +566,18 @@ def make_warm_sfx(kind: str, sr: int = 48000) -> np.ndarray:
         return (signal.sosfilt(sos, noise) * (np.sin(np.pi * (t / dur)) ** 1.8) * 0.028).astype(np.float32)
 
 
-def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float, fps: int = 30) -> list[dict]:
+def build_chapters_clone_mode(
+    proj: dict,
+    cache_dir: Path,
+    speed_default: float,
+    fps: int = 30,
+    voice_override: str | None = None,
+) -> list[dict]:
     from rapid_mlx.audio.stt import STTEngine
 
     ensure_tts_server()
+    reg = load_voice_registry()
+    default_voice = voice_override or proj.get("default_voice") or proj.get("voice") or reg.get("default_voice", "hahaxiong")
     aligner = STTEngine("mlx-community/Qwen3-ForcedAligner-0.6B-8bit")
     aligner.load()
 
@@ -410,6 +597,7 @@ def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float,
         for s_idx, sc in enumerate(scenes_in):
             sc_start = cur
             sfx_list.append((max(0.01, sc_start - 0.055), "soft_transition" if s_idx > 0 else "warm_pop"))
+            sc_voice = voice_override or sc.get("voice") or ch.get("voice") or default_voice
             preset = sc.get("preset") or proj.get("default_preset", "mix")
             speed = float(sc.get("speed") or speed_default)
             clauses_in = sc.get("clauses", [])
@@ -418,7 +606,11 @@ def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float,
             for c_idx, cl in enumerate(clauses_in):
                 tts_txt = cl.get("tts_text") or cl["display_text"]
                 disp_txt = cl["display_text"]
-                wav_p, c_dur, rel_chars = synth_and_align_clause(tts_txt, preset, speed, cache_dir, aligner)
+                cl_voice = voice_override or cl.get("voice") or sc_voice
+                cl_preset = cl.get("preset") or preset
+                wav_p, c_dur, rel_chars, used_vid, used_preset = synth_and_align_clause(
+                    tts_txt, cl_preset, speed, cache_dir, aligner, voice=cl_voice, reg=reg
+                )
                 samples, _ = sf.read(str(wav_p), dtype="float32")
                 chunks.append(samples)
 
@@ -432,6 +624,8 @@ def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float,
                 c_obj = {
                     "sceneId": sc["id"],
                     "clauseIndex": c_idx,
+                    "voice": used_vid,
+                    "preset": used_preset,
                     "displayText": disp_txt,
                     "ttsText": tts_txt,
                     "start": c_start,
@@ -476,9 +670,9 @@ def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float,
             dry_arr = np.concatenate([dry_arr, np.zeros(samples_per_frame - rem, dtype=np.float32)])
 
         # Normalize chapter voice track to -16.5 LUFS + mix warm ambient pad & micro-SFX
-        # Include per-scene preset, speed, pauses, tail pause, fps, and exact aligned clause bounds in ch_hash!
+        # Include per-scene voice, model weight signatures, preset, speed, pauses, tail pause, fps, and aligned bounds in ch_hash!
         ch_hash_payload = {
-            "v": "v4_full_timing",
+            "v": "v6_steady_v2",
             "fps": fps,
             "speed_default": speed_default,
             "chapter_tail_pause_ms": ch.get("chapter_tail_pause_ms"),
@@ -488,7 +682,19 @@ def build_chapters_clone_mode(proj: dict, cache_dir: Path, speed_default: float,
                     "preset": s_in.get("preset") or proj.get("default_preset", "mix"),
                     "speed": float(s_in.get("speed") or speed_default),
                     "pause_after_ms": s_in.get("pause_after_ms"),
-                    "clauses": [(c["ttsText"], c["start"], c["end"]) for c in s_out["clauses"]],
+                    "clauses": [
+                        (
+                            c.get("voice", default_voice),
+                            reg.get("voices", {}).get(c.get("voice", default_voice), {}).get("gpt_weights", ""),
+                            reg.get("voices", {}).get(c.get("voice", default_voice), {}).get("sovits_weights", ""),
+                            tuple(reg.get("voices", {}).get(c.get("voice", default_voice), {}).get("aux_ref_audio_paths", [])),
+                            c.get("preset", "mix"),
+                            c["ttsText"],
+                            c["start"],
+                            c["end"],
+                        )
+                        for c in s_out["clauses"]
+                    ],
                 }
                 for s_out, s_in in zip(scenes_payload, scenes_in)
             ],
@@ -775,6 +981,7 @@ def main():
     parser.add_argument("--project", required=True, help="Path to video_project.json")
     parser.add_argument("--out-dir", required=True, help="Output directory for MP4 and SRT")
     parser.add_argument("--aspects", default="16x9", help="Deprecated/compatibility flag; always renders 16x9 (1920x1080)")
+    parser.add_argument("--voice", type=str, default=None, help="Override voice ID or alias from voices/registry.json (e.g. hahaxiong, female_01, 女声)")
     parser.add_argument("--speed", type=float, default=None, help="Override TTS speed_factor")
     parser.add_argument("--voice-file", type=str, default=None, help="Optional raw human .wav/.m4a for passthrough mode")
     parser.add_argument("--lint-only", action="store_true")
@@ -786,7 +993,7 @@ def main():
     proj_dir = proj_path.parent
     proj = json.loads(proj_path.read_text(encoding="utf-8"))
 
-    warnings = lint_project(proj, strict_sync=args.strict_sync)
+    warnings = lint_project(proj, strict_sync=args.strict_sync, voice_override=args.voice)
     for w in warnings:
         print("LINT WARN:", w)
     if args.lint_only:
@@ -819,7 +1026,7 @@ def main():
             raise ValueError("Passthrough mode requires --voice-file or 'raw_voice_path' in project JSON.")
         chapters = build_chapters_passthrough_mode(proj, (proj_dir / voice_file).resolve(), cache_dir)
     else:
-        chapters = build_chapters_clone_mode(proj, cache_dir, speed_default=speed, fps=fps)
+        chapters = build_chapters_clone_mode(proj, cache_dir, speed_default=speed, fps=fps, voice_override=args.voice)
 
     slug = proj.get("slug", proj_path.stem)
     export_srt(chapters, out_dir / f"{slug}.srt")

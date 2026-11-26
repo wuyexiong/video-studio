@@ -23,6 +23,7 @@ Every scene (regardless of `primitive`) supports an optional **Top Scene Thesis 
   "title": "Adanotch 深度拆解",
   "archetype": "teardown",
   "voice_mode": "clone",
+  "default_voice": "hahaxiong",
   "default_preset": "mix",
   "speed_factor": 1.10,
   "fps": 30,
@@ -52,6 +53,7 @@ Every scene (regardless of `primitive`) supports an optional **Top Scene Thesis 
         {
           "id": "ch1_s1",
           "primitive": "focus_hud_demo",
+          "voice": "hahaxiong",
           "preset": "mix",
           "pause_after_ms": 340,
           "clauses": [
@@ -72,10 +74,15 @@ Every scene (regardless of `primitive`) supports an optional **Top Scene Thesis 
 }
 ```
 
-### Voice Preset Rules (`/Users/hahaxiong/Toos/VoiceClone/AGENTS.md`)
-- `"mix"`: Default for Chinese + English tech terms (`Claude Code`, `SaaS`, `GitHub`, `Allow`). Automatically sends `text_lang: "zh"` so English words are never dropped.
-- `"zh"`: Grounded pure-Chinese deep narrative voice — ideal for opening theses, philosophical transitions, and closing takeaways.
-- `"en"`: Pure English narration (`text_lang: "en"`) for global Product Hunt / X / YouTube English videos.
+### Multi-Voice & Preset Rules (`/Users/hahaxiong/Toos/VoiceClone/voices/registry.json` & `AGENTS.md`)
+- **Multi-Voice Routing (`default_voice` / `scene.voice` / `clause.voice` / CLI `--voice`)**:
+  - `build_video.py` dynamically loads `/Users/hahaxiong/Toos/VoiceClone/voices/registry.json` and hot-swaps GPT + SoVITS weights via `127.0.0.1:9880/set_gpt_weights` & `/set_sovits_weights` (idempotent 0ms check when unchanged).
+  - Default voice is `"hahaxiong"` (main male voice; aliases: `"男声"`, `"我"`, `"我的声音"`).
+  - Secondary voices registered in `voices/registry.json` (e.g. `"female_01"`, alias `"女声"`) can be set globally via `"default_voice": "female_01"` or `--voice female_01`, or mixed per-scene / per-clause for multi-speaker dialogue!
+- **Emotion Presets (`preset`)**:
+  - `"mix"`: Default for Chinese + English tech terms (`Claude Code`, `SaaS`, `GitHub`, `Allow`). Automatically sends `text_lang: "zh"` so English words are never dropped.
+  - `"zh"`: Grounded pure-Chinese deep narrative voice — ideal for opening theses, philosophical transitions, and closing takeaways. (Automatically falls back to `"mix"` if a secondary voice has not configured a `"zh"` prompt WAV yet.)
+  - `"en"`: Pure English narration (`text_lang: "en"`) for global Product Hunt / X / YouTube English videos.
 - **1:1 Verbatim Subtitle Law**: `display_text` must contain the **exact same words** spoken in `tts_text`! Only convert spoken digits/symbols into Arabic numerals/symbols (`tts_text: "首周流水不到一千美金。"` -> `display_text: "首周流水不到 $1,000"`). Never put unspoken summary words in `display_text` (put summary titles in `scene.data` card fields instead!). `build_video.py` enforces this automatically via `Subtitle Sync Violation` lint error.
 
 ---

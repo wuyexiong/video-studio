@@ -104,7 +104,55 @@ const TOKENS = {
   fontMono: '"JetBrains Mono", "Noto Sans Mono CJK SC", "MesloLGS NF", ui-monospace, monospace',
 };
 
-const SPRING_SNAPPY = { damping: 22, stiffness: 210, mass: 0.85 };
+const SPRING_SNAPPY = { damping: 24, stiffness: 175, mass: 0.88 };
+const SPRING_SILKY = { damping: 28, stiffness: 140, mass: 0.95 };
+const SPRING_BOUNCE = { damping: 17, stiffness: 195, mass: 0.78 };
+
+function formatRollingMetric(raw: string, progress: number): string {
+  if (progress >= 0.99) return raw;
+  return raw.replace(/\d+(\.\d+)?/g, (match) => {
+    const num = parseFloat(match);
+    if (isNaN(num)) return match;
+    const cur = num * progress;
+    if (match.includes('.')) {
+      const decimals = match.split('.')[1]?.length || 1;
+      return cur.toFixed(decimals);
+    }
+    return String(Math.round(cur));
+  });
+}
+
+const SceneStageTransition: React.FC<{ durationInFrames: number; children: React.ReactNode }> = ({
+  durationInFrames,
+  children,
+}) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const enterP = spring({ frame, fps, config: SPRING_SILKY });
+  const exitFrames = 8;
+  const exitP =
+    durationInFrames > 20 && frame > durationInFrames - exitFrames
+      ? interpolate(frame, [durationInFrames - exitFrames, durationInFrames], [1, 0], {
+          extrapolateLeft: 'clamp',
+          extrapolateRight: 'clamp',
+          easing: Easing.in(Easing.cubic),
+        })
+      : 1;
+  const breathY = Math.sin(frame / 26) * 2.2;
+  const scale = interpolate(enterP, [0, 1], [0.976, 1]) * interpolate(exitP, [0, 1], [0.988, 1]);
+  const translateY = interpolate(enterP, [0, 1], [16, 0]) + breathY;
+
+  return (
+    <AbsoluteFill
+      style={{
+        opacity: Math.min(enterP, exitP),
+        transform: `translateY(${translateY}px) scale(${scale})`,
+      }}
+    >
+      {children}
+    </AbsoluteFill>
+  );
+};
 
 function tonePalette(tone: Tone = 'neutral') {
   if (tone === 'amber') {
@@ -386,17 +434,25 @@ const PrimitiveChapterCard: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   );
 };
 
-// 2. persona_quote — Speaker / Founder Avatar Shift + Role Pills + Quote
+// 2. persona_quote — Speaker / Founder Avatar Shift + Breathing Halo + Clause-Synced Quote Underline
 const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
   const badges: string[] = Array.isArray(d.badges) ? d.badges : [];
-  const beat2 = getBeatFrame(scene, 1, fps, 0.42);
+  const beat2 = getBeatFrame(scene, 1, fps, 0.36);
+  const beat3 = getBeatFrame(scene, Math.min(2, scene.clauses.length - 1), fps, 0.62);
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
 
-  const avEnter = spring({ frame, fps, config: SPRING_SNAPPY });
-  const shift = spring({ frame: frame - 10, fps, config: SPRING_SNAPPY });
-  const quoteEnter = spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY });
+  const avEnter = spring({ frame, fps, config: SPRING_SILKY });
+  const shift = spring({ frame: frame - 8, fps, config: SPRING_SILKY });
+  const quoteEnter = spring({ frame: frame - beat2, fps, config: SPRING_SILKY });
+  const underlineP = interpolate(frame, [beat3 - 4, beat3 + 24], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.out(Easing.cubic),
+  });
+  const haloPulse = 0.5 + 0.5 * Math.sin(frame / 14);
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: '0 160px' }}>
@@ -409,7 +465,7 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           transform: 'translateY(-24px)',
         }}
       >
-        {/* Circular Avatar Badge */}
+        {/* Circular Avatar Badge with Breathing Orbital Ring */}
         <div
           style={{
             display: 'flex',
@@ -417,36 +473,55 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
             alignItems: 'center',
             gap: 14,
             opacity: avEnter,
-            transform: `scale(${interpolate(avEnter, [0, 1], [0.85, 1])})`,
+            transform: `scale(${interpolate(avEnter, [0, 1], [0.86, 1])})`,
           }}
         >
-          <div
-            style={{
-              width: 176,
-              height: 176,
-              borderRadius: '50%',
-              background: 'linear-gradient(145deg, #343438, #222225)',
-              border: `3px solid ${TOKENS.amber}`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              overflow: 'hidden',
-              boxShadow: '0 20px 50px rgba(0,0,0,0.45)',
-            }}
-          >
-            {d.avatarFile ? (
-              <Img src={staticFile(d.avatarFile)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              <span style={{ fontFamily: TOKENS.fontMono, fontSize: 58, fontWeight: 800, color: TOKENS.amber }}>
-                {(d.avatarMonogram || d.name || 'AI').slice(0, 2).toUpperCase()}
-              </span>
-            )}
+          <div style={{ position: 'relative', width: 184, height: 184, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div
+              style={{
+                position: 'absolute',
+                inset: -8,
+                borderRadius: '50%',
+                border: `1.5px solid rgba(245, 158, 11, ${0.22 + haloPulse * 0.28})`,
+                transform: `scale(${1 + haloPulse * 0.045})`,
+              }}
+            />
+            <div
+              style={{
+                width: 176,
+                height: 176,
+                borderRadius: '50%',
+                background: 'linear-gradient(145deg, #343438, #222225)',
+                border: `3px solid ${TOKENS.amber}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+                boxShadow: `0 20px 50px rgba(0,0,0,0.48), 0 0 ${18 + haloPulse * 14}px rgba(245, 158, 11, 0.22)`,
+              }}
+            >
+              {d.avatarFile ? (
+                <Img
+                  src={staticFile(d.avatarFile)}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    transform: `scale(${1 + Math.sin(frame / 45) * 0.03})`,
+                  }}
+                />
+              ) : (
+                <span style={{ fontFamily: TOKENS.fontMono, fontSize: 58, fontWeight: 800, color: TOKENS.amber }}>
+                  {(d.avatarMonogram || d.name || 'AI').slice(0, 2).toUpperCase()}
+                </span>
+              )}
+            </div>
           </div>
           <div style={{ fontSize: 30, fontWeight: 800, color: TOKENS.ink }}>{d.name || 'Creator'}</div>
           {d.role && (
             <div
               style={{
-                padding: '4px 14px',
+                padding: '5px 16px',
                 borderRadius: 999,
                 background: TOKENS.card,
                 border: `1px solid ${TOKENS.border}`,
@@ -460,24 +535,25 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
         </div>
 
         {/* Right Progressive Pills + Quote Card */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 780 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 800 }}>
           {badges.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
               {badges.map((b, idx) => {
-                const p = spring({ frame: frame - (10 + idx * 5), fps, config: SPRING_SNAPPY });
+                const p = spring({ frame: frame - (8 + idx * 6), fps, config: SPRING_SILKY });
+                const isSpotlight = activeClause === idx;
                 return (
                   <div
                     key={idx}
                     style={{
                       padding: '10px 20px',
                       borderRadius: 12,
-                      background: TOKENS.card,
-                      border: `1px solid ${TOKENS.border}`,
+                      background: isSpotlight ? TOKENS.amberSoft : TOKENS.card,
+                      border: `1.5px solid ${isSpotlight ? TOKENS.amberBorder : TOKENS.border}`,
                       fontSize: 22,
-                      fontWeight: 600,
-                      color: TOKENS.ink,
+                      fontWeight: 700,
+                      color: isSpotlight ? TOKENS.amber : TOKENS.ink,
                       opacity: p,
-                      transform: `translateX(${interpolate(p, [0, 1], [16, 0])}px)`,
+                      transform: `translateX(${interpolate(p, [0, 1], [18, 0])}px) scale(${isSpotlight ? 1.03 : 1})`,
                     }}
                   >
                     {b}
@@ -490,20 +566,35 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           {d.quote && (
             <div
               style={{
+                position: 'relative',
+                overflow: 'hidden',
                 background: TOKENS.card,
-                border: `1px solid ${TOKENS.amberBorder}`,
-                borderRadius: 16,
-                padding: '28px 32px',
+                border: `1.5px solid ${activeClause >= 2 ? TOKENS.amber : TOKENS.amberBorder}`,
+                borderRadius: 18,
+                padding: '30px 34px',
                 opacity: badges.length ? quoteEnter : shift,
-                transform: `translateY(${interpolate(badges.length ? quoteEnter : shift, [0, 1], [20, 0])}px)`,
+                transform: `translateY(${interpolate(badges.length ? quoteEnter : shift, [0, 1], [22, 0])}px) scale(${
+                  activeClause >= 2 ? 1.015 : 1
+                })`,
+                boxShadow: activeClause >= 2 ? '0 24px 56px rgba(0,0,0,0.48), 0 0 28px rgba(245, 158, 11, 0.12)' : '0 16px 40px rgba(0,0,0,0.32)',
               }}
             >
-              <div style={{ fontFamily: TOKENS.fontMono, fontSize: 44, lineHeight: 0.8, color: TOKENS.amber, marginBottom: 8 }}>
+              <div style={{ fontFamily: TOKENS.fontMono, fontSize: 46, lineHeight: 0.8, color: TOKENS.amber, marginBottom: 10 }}>
                 “
               </div>
-              <div style={{ fontSize: 36, fontWeight: 700, color: TOKENS.ink, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 36, fontWeight: 700, color: TOKENS.ink, lineHeight: 1.44 }}>
                 {d.quote}
               </div>
+              {/* Animated Amber Underline Progress Bar on Quote Punchline */}
+              <div
+                style={{
+                  marginTop: 16,
+                  height: 4,
+                  width: `${Math.round(underlineP * 100)}%`,
+                  background: `linear-gradient(90deg, ${TOKENS.amber}, ${TOKENS.emerald})`,
+                  borderRadius: 999,
+                }}
+              />
               {d.source && (
                 <div style={{ fontFamily: TOKENS.fontMono, fontSize: 18, color: TOKENS.inkMuted, marginTop: 12 }}>
                   — {d.source}
@@ -517,7 +608,7 @@ const PrimitivePersonaQuote: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   );
 };
 
-// 3. dot_matrix_stat — Proportion Dot Grid + Big Monospace Metric (1,000 -> 0.2% style)
+// 3. dot_matrix_stat — Diagonal Wave-Ripple Dot Grid + Kinetic Rolling Counter + Clause-Synced Badges
 const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -527,11 +618,19 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
   const totalDots = cols * rows;
   const activeCount = Math.max(1, Math.min(totalDots, Number(d.highlightDots ?? 4)));
   const pal = tonePalette(d.tone || 'amber');
-  const beat2 = getBeatFrame(scene, 1, fps, 0.45);
+  const beat2 = getBeatFrame(scene, 1, fps, 0.35);
+  const beat3 = getBeatFrame(scene, Math.min(2, scene.clauses.length - 1), fps, 0.62);
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
 
-  const gridEnter = spring({ frame, fps, config: SPRING_SNAPPY });
-  const statEnter = spring({ frame: frame - beat2, fps, config: SPRING_SNAPPY });
+  const gridEnter = spring({ frame, fps, config: SPRING_SILKY });
+  const statEnter = spring({ frame: frame - Math.min(10, beat2), fps, config: SPRING_SILKY });
+  const countProgress = interpolate(frame, [6, Math.max(28, beat2 + 16)], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.out(Easing.cubic),
+  });
   const badges: string[] = Array.isArray(d.badges) ? d.badges : [];
+  const litThresholdIdx = totalDots - activeCount;
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -540,11 +639,13 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
           display: 'flex',
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 84,
+          gap: 76,
           transform: 'translateY(-22px)',
+          maxWidth: 1680,
+          padding: '0 80px',
         }}
       >
-        <div style={{ opacity: gridEnter }}>
+        <div style={{ opacity: gridEnter, flexShrink: 0 }}>
           {d.gridCaption && (
             <div style={{ fontFamily: TOKENS.fontMono, fontSize: 22, color: TOKENS.inkSecondary, marginBottom: 16 }}>
               {d.gridCaption}
@@ -558,17 +659,31 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
             }}
           >
             {Array.from({ length: totalDots }).map((_, idx) => {
-              const isLit = idx >= totalDots - activeCount && frame >= Math.min(beat2, 12);
+              const r = Math.floor(idx / cols);
+              const c = idx % cols;
+              const diagDelay = (r + c) * 0.75;
+              const dotAppear = spring({ frame: frame - diagDelay, fps, config: SPRING_BOUNCE });
+              const shouldLight = idx >= litThresholdIdx;
+              const lightOrder = Math.max(0, idx - litThresholdIdx);
+              const lightFrame = 8 + (lightOrder / Math.max(1, activeCount)) * 24;
+              const lightP = shouldLight
+                ? spring({ frame: frame - lightFrame, fps, config: SPRING_BOUNCE })
+                : 0;
+              const pulse = shouldLight && frame > lightFrame + 12 ? 1 + Math.sin((frame + idx) / 15) * 0.06 : 1;
+              const size = interpolate(lightP, [0, 1], [10, 18]) * pulse;
+
               return (
                 <div
                   key={idx}
                   style={{
-                    width: isLit ? 18 : 10,
-                    height: isLit ? 18 : 10,
+                    width: size,
+                    height: size,
                     borderRadius: '50%',
-                    background: isLit ? pal.fg : '#48484C',
-                    boxShadow: isLit ? `0 0 18px ${pal.fg}` : 'none',
+                    background: lightP > 0.15 ? pal.fg : '#48484C',
+                    boxShadow: lightP > 0.3 ? `0 0 ${Math.round(16 * lightP)}px ${pal.fg}` : 'none',
                     placeSelf: 'center',
+                    opacity: dotAppear,
+                    transform: `scale(${dotAppear})`,
                   }}
                 />
               );
@@ -585,31 +700,56 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
             transform: `translateY(${interpolate(statEnter, [0, 1], [22, 0])}px)`,
           }}
         >
-          <div style={{ fontFamily: TOKENS.fontMono, fontSize: 108, fontWeight: 800, color: pal.fg, lineHeight: 1 }}>
-            {d.metricValue || '0.2%'}
+          <div
+            style={{
+              fontFamily: TOKENS.fontMono,
+              fontSize: 108,
+              fontWeight: 800,
+              color: pal.fg,
+              lineHeight: 1,
+              textShadow: `0 12px 36px ${pal.bg}`,
+            }}
+          >
+            {formatRollingMetric(String(d.metricValue || '0.2%'), countProgress)}
           </div>
-          <div style={{ fontSize: 32, fontWeight: 700, color: TOKENS.ink, marginTop: 14 }}>
+          <div
+            style={{
+              fontSize: 32,
+              fontWeight: 700,
+              color: TOKENS.ink,
+              marginTop: 16,
+              lineHeight: 1.38,
+            }}
+          >
             {d.metricLabel || ''}
           </div>
           {badges.length > 0 && (
-            <div style={{ display: 'flex', gap: 12, marginTop: 20, flexWrap: 'wrap' }}>
-              {badges.map((b, i) => (
-                <span
-                  key={i}
-                  style={{
-                    padding: '7px 18px',
-                    borderRadius: 999,
-                    border: `1px solid ${pal.border}`,
-                    background: pal.bg,
-                    color: pal.fg,
-                    fontFamily: TOKENS.fontMono,
-                    fontSize: 20,
-                    fontWeight: 700,
-                  }}
-                >
-                  {b}
-                </span>
-              ))}
+            <div style={{ display: 'flex', gap: 14, marginTop: 22, flexWrap: 'wrap' }}>
+              {badges.map((b, i) => {
+                const bStart = i === 0 ? beat2 : beat3;
+                const bP = spring({ frame: frame - bStart, fps, config: SPRING_BOUNCE });
+                const isFocused = activeClause >= i + 1;
+                return (
+                  <span
+                    key={i}
+                    style={{
+                      padding: '8px 20px',
+                      borderRadius: 999,
+                      border: `1.5px solid ${isFocused ? pal.fg : pal.border}`,
+                      background: pal.bg,
+                      color: pal.fg,
+                      fontFamily: TOKENS.fontMono,
+                      fontSize: 20,
+                      fontWeight: 700,
+                      opacity: bP,
+                      transform: `translateY(${interpolate(bP, [0, 1], [14, 0])}px) scale(${isFocused ? 1.04 : 1})`,
+                      boxShadow: isFocused ? `0 8px 22px rgba(0,0,0,0.32)` : 'none',
+                    }}
+                  >
+                    {b}
+                  </span>
+                );
+              })}
             </div>
           )}
         </div>
@@ -618,14 +758,14 @@ const PrimitiveDotMatrixStat: React.FC<{ scene: StudioScene }> = ({ scene }) => 
   );
 };
 
-// 4. flow_3node — Progressive SVG-Connected Architecture / Funnel Flow (2 to 4 Nodes)
+// 4. flow_3node — Clause-Synced Progressive SVG Architecture Flow + Traveling Signal Pulse
 const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const nodes: Array<{ tag?: string; title: string; subtitle?: string; bigValue?: string; badge?: string; tone?: Tone }> =
     Array.isArray(scene.data?.nodes) ? scene.data.nodes.slice(0, 4) : [];
-
-  const stepFrames = Math.max(10, Math.floor((scene.duration * fps * 0.62) / Math.max(1, nodes.length)));
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
+  const focusedNodeIdx = Math.min(nodes.length - 1, Math.max(0, activeClause));
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -639,15 +779,19 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
         }}
       >
         {nodes.map((nd, idx) => {
-          const startF = idx * stepFrames;
-          const enter = spring({ frame: frame - startF, fps, config: SPRING_SNAPPY });
-          const lineP = interpolate(frame, [startF + 4, startF + 16], [0, 1], {
+          const startF = idx === 0 ? 0 : getBeatFrame(scene, Math.min(idx, scene.clauses.length - 1), fps, idx / Math.max(1, nodes.length));
+          const enter = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
+          const isFocused = idx === focusedNodeIdx && frame >= startF;
+          const isRevealed = frame >= startF - 2;
+          const focusP = spring({ frame: frame - (isFocused ? startF : 0), fps, config: SPRING_SILKY });
+          const lineP = interpolate(frame, [startF + 2, startF + 18], [0, 1], {
             extrapolateLeft: 'clamp',
             extrapolateRight: 'clamp',
             easing: Easing.out(Easing.cubic),
           });
           const pal = tonePalette(nd.tone || (idx === 0 ? 'amber' : 'neutral'));
-          const isHighlight = nd.tone === 'emerald' || nd.tone === 'coral';
+          const isHighlight = nd.tone === 'emerald' || nd.tone === 'coral' || isFocused;
+          const pulseX = ((frame * 2.2) % 66);
 
           return (
             <React.Fragment key={idx}>
@@ -655,12 +799,17 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                 style={{
                   width: Math.min(430, Math.floor(1520 / Math.max(2, nodes.length))),
                   background: isHighlight ? pal.bg : TOKENS.card,
-                  border: `1.5px solid ${isHighlight ? pal.border : TOKENS.border}`,
+                  border: `${isFocused ? '2px' : '1.5px'} solid ${isHighlight ? pal.fg : TOKENS.border}`,
                   borderLeft: idx === 0 && !isHighlight ? `4px solid ${TOKENS.amber}` : undefined,
-                  borderRadius: 16,
+                  borderRadius: 18,
                   padding: '26px 28px',
-                  opacity: enter,
-                  transform: `translateY(${interpolate(enter, [0, 1], [20, 0])}px)`,
+                  opacity: isRevealed ? (isFocused || activeClause >= nodes.length ? enter : enter * 0.68) : 0.08,
+                  transform: `translateY(${interpolate(enter, [0, 1], [22, isFocused ? -6 : 0])}px) scale(${
+                    isFocused ? interpolate(focusP, [0, 1], [0.98, 1.03]) : 0.985
+                  })`,
+                  boxShadow: isFocused
+                    ? `0 24px 54px rgba(0,0,0,0.48), 0 0 26px ${pal.bg}`
+                    : '0 12px 30px rgba(0,0,0,0.25)',
                 }}
               >
                 {nd.tag && (
@@ -670,14 +819,14 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                 )}
                 {nd.bigValue && (
                   <div style={{ fontFamily: TOKENS.fontMono, fontSize: 58, fontWeight: 800, color: pal.fg, lineHeight: 1.08, marginBottom: 6 }}>
-                    {nd.bigValue}
+                    {formatRollingMetric(nd.bigValue, enter)}
                   </div>
                 )}
                 <div style={{ fontSize: 30, fontWeight: 700, color: TOKENS.ink, marginBottom: nd.subtitle ? 8 : 0 }}>
                   {nd.title}
                 </div>
                 {nd.subtitle && (
-                  <div style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary }}>
+                  <div style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, lineHeight: 1.42 }}>
                     {nd.subtitle}
                   </div>
                 )}
@@ -706,9 +855,13 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                   width={74}
                   height={36}
                   viewBox="0 0 74 36"
-                  style={{ opacity: lineP > 0.03 ? 1 : 0, flexShrink: 0 }}
+                  style={{ opacity: lineP > 0.03 ? 1 : 0.15, flexShrink: 0 }}
                 >
+                  <line x1="4" y1="18" x2="70" y2="18" stroke="rgba(255,255,255,0.12)" strokeWidth="3" strokeDasharray="4 4" />
                   <line x1="4" y1="18" x2={4 + 66 * lineP} y2="18" stroke={TOKENS.amber} strokeWidth="3.5" strokeLinecap="round" />
+                  {lineP > 0.85 && (
+                    <circle cx={4 + pulseX} cy="18" r="4.5" fill={TOKENS.emerald} />
+                  )}
                 </svg>
               )}
             </React.Fragment>
@@ -719,12 +872,16 @@ const PrimitiveFlow3Node: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   );
 };
 
-// 5. matrix_compare — 2 to 3 Column Semantic Matrix (Attack/Defense, Pros/Cons, Competitor Table)
+// 5. matrix_compare — Clause-Synced Spotlight Column Comparison Matrix (Active Column Lift & Focus)
 const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const cols: Array<{ header: string; tone?: Tone; items: Array<{ title: string; detail?: string; badge?: string }> }> =
     Array.isArray(scene.data?.columns) ? scene.data.columns.slice(0, 3) : [];
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
+
+  const showAllTogether = scene.clauses.length > cols.length && activeClause === scene.clauses.length - 1 && cols.length === 2;
+  const activeColIdx = Math.min(cols.length - 1, Math.max(0, activeClause - (scene.clauses.length > cols.length ? 1 : 0)));
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', padding: '0 110px' }}>
@@ -732,16 +889,22 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
         style={{
           display: 'grid',
           gridTemplateColumns: `repeat(${Math.max(1, cols.length)}, 1fr)`,
-          gap: 22,
+          gap: 26,
           width: '100%',
           maxWidth: 1640,
           transform: 'translateY(-22px)',
         }}
       >
         {cols.map((col, cIdx) => {
-          const enter = spring({ frame: frame - cIdx * 8, fps, config: SPRING_SNAPPY });
+          const enter = spring({ frame: frame - cIdx * 7, fps, config: SPRING_SILKY });
           const pal = tonePalette(col.tone || 'neutral');
           const tinted = col.tone && col.tone !== 'neutral';
+          const isFocused = showAllTogether || cIdx === activeColIdx;
+          const focusSpring = spring({
+            frame: frame - getBeatFrame(scene, Math.min(cIdx, scene.clauses.length - 1), fps),
+            fps,
+            config: SPRING_SILKY,
+          });
 
           return (
             <div
@@ -750,50 +913,72 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 14,
-                opacity: enter,
-                transform: `translateY(${interpolate(enter, [0, 1], [24, 0])}px)`,
+                padding: '20px 18px',
+                borderRadius: 20,
+                background: isFocused ? 'rgba(255,255,255,0.025)' : 'transparent',
+                border: `1.5px solid ${isFocused ? pal.border : 'rgba(255,255,255,0.05)'}`,
+                opacity: enter * (isFocused ? 1 : 0.54),
+                transform: `translateY(${interpolate(enter, [0, 1], [24, isFocused ? -6 : 2])}px) scale(${
+                  isFocused ? 1.018 : 0.985
+                })`,
+                boxShadow: isFocused ? '0 24px 56px rgba(0,0,0,0.42)' : 'none',
               }}
             >
+              <div
+                style={{
+                  height: 4,
+                  width: isFocused ? `${Math.round(interpolate(focusSpring, [0, 1], [35, 72]))}%` : '24%',
+                  alignSelf: 'center',
+                  borderRadius: 999,
+                  background: isFocused ? pal.fg : TOKENS.border,
+                  marginBottom: 2,
+                }}
+              />
               <div style={{ fontSize: 28, fontWeight: 800, color: pal.fg, textAlign: 'center', marginBottom: 4 }}>
                 {col.header}
               </div>
-              {(col.items || []).map((it, rIdx) => (
-                <div
-                  key={rIdx}
-                  style={{
-                    background: tinted ? pal.bg : TOKENS.card,
-                    border: `1px solid ${tinted ? pal.border : TOKENS.border}`,
-                    borderLeft: !tinted ? `4px solid ${TOKENS.amber}` : undefined,
-                    borderRadius: 14,
-                    padding: '20px 22px',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 26, fontWeight: 700, color: TOKENS.ink }}>{it.title}</span>
-                    {it.badge && (
-                      <span
-                        style={{
-                          padding: '4px 12px',
-                          borderRadius: 999,
-                          background: pal.bg,
-                          border: `1px solid ${pal.border}`,
-                          color: pal.fg,
-                          fontFamily: TOKENS.fontMono,
-                          fontSize: 16,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {it.badge}
-                      </span>
+              {(col.items || []).map((it, rIdx) => {
+                const itemP = spring({ frame: frame - (cIdx * 7 + rIdx * 5 + 4), fps, config: SPRING_SILKY });
+                return (
+                  <div
+                    key={rIdx}
+                    style={{
+                      background: tinted ? pal.bg : TOKENS.card,
+                      border: `1.5px solid ${isFocused && tinted ? pal.fg : tinted ? pal.border : TOKENS.border}`,
+                      borderLeft: !tinted ? `4px solid ${isFocused ? TOKENS.amber : TOKENS.border}` : undefined,
+                      borderRadius: 14,
+                      padding: '20px 22px',
+                      opacity: itemP,
+                      transform: `translateY(${interpolate(itemP, [0, 1], [12, 0])}px)`,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 26, fontWeight: 700, color: TOKENS.ink }}>{it.title}</span>
+                      {it.badge && (
+                        <span
+                          style={{
+                            padding: '4px 12px',
+                            borderRadius: 999,
+                            background: isFocused ? pal.fg : pal.bg,
+                            border: `1px solid ${pal.border}`,
+                            color: isFocused && col.tone !== 'neutral' ? '#141416' : pal.fg,
+                            fontFamily: TOKENS.fontMono,
+                            fontSize: 16,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {it.badge}
+                        </span>
+                      )}
+                    </div>
+                    {it.detail && (
+                      <div style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, marginTop: 8, lineHeight: 1.4 }}>
+                        {it.detail}
+                      </div>
                     )}
                   </div>
-                  {it.detail && (
-                    <div style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, marginTop: 8 }}>
-                      {it.detail}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           );
         })}
@@ -1032,7 +1217,7 @@ const PrimitiveLiveWebShowcase: React.FC<{ scene: StudioScene }> = ({ scene }) =
   );
 };
 
-// 8. terminal_code_live — Progressive CLI / Code Execution Stream (GitHub & Tech Deep-Dives)
+// 8. terminal_code_live — Clause-Synced Typewriter CLI / Code Stream + Blinking Cursor & Focus Bar
 const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -1040,43 +1225,56 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
   const lines: Array<{ text: string; kind?: 'cmd' | 'out' | 'comment'; highlight?: boolean }> = Array.isArray(d.lines)
     ? d.lines
     : [];
-  const stepF = Math.max(6, Math.floor((scene.duration * fps * 0.72) / Math.max(1, lines.length)));
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
+  const stepF = Math.max(8, Math.floor((scene.duration * fps * 0.68) / Math.max(1, lines.length)));
 
-  const winEnter = spring({ frame, fps, config: SPRING_SNAPPY });
+  const winEnter = spring({ frame, fps, config: SPRING_SILKY });
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div
         style={{
-          width: 1320,
+          width: 1340,
           background: '#191A1D',
-          border: `1px solid ${TOKENS.border}`,
-          borderRadius: 16,
+          border: `1.5px solid ${TOKENS.border}`,
+          borderRadius: 18,
           overflow: 'hidden',
-          boxShadow: '0 28px 64px rgba(0,0,0,0.48)',
+          boxShadow: '0 32px 72px rgba(0,0,0,0.54)',
           opacity: winEnter,
           transform: `translateY(${interpolate(winEnter, [0, 1], [22, -20])}px)`,
         }}
       >
-        <div style={{ padding: '14px 22px', background: '#222327', borderBottom: `1px solid ${TOKENS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, fontWeight: 600 }}>
-            {d.windowTitle || 'zsh · terminal'}
-          </span>
+        <div style={{ padding: '15px 24px', background: '#222327', borderBottom: `1px solid ${TOKENS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#FF5F56' }} />
+            <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#FFBD2E' }} />
+            <span style={{ width: 12, height: 12, borderRadius: '50%', background: '#27C93F' }} />
+            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 19, color: TOKENS.inkSecondary, fontWeight: 600, marginLeft: 8 }}>
+              {d.windowTitle || 'zsh · terminal'}
+            </span>
+          </div>
           {d.badge && (
-            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 16, color: TOKENS.emerald, background: TOKENS.emeraldSoft, padding: '3px 12px', borderRadius: 999 }}>
+            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 16, color: TOKENS.emerald, background: TOKENS.emeraldSoft, padding: '4px 14px', borderRadius: 999, fontWeight: 700 }}>
               {d.badge}
             </span>
           )}
         </div>
-        <div style={{ padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ padding: '28px 34px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {lines.map((ln, idx) => {
-            const p = spring({ frame: frame - idx * stepF, fps, config: SPRING_SNAPPY });
+            const startF = idx * stepF;
+            const p = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
+            const typeP = interpolate(frame, [startF, startF + 16], [0.12, 1], {
+              extrapolateLeft: 'clamp',
+              extrapolateRight: 'clamp',
+            });
+            const charsToShow = frame >= startF ? Math.ceil(ln.text.length * typeP) : 0;
+            const isCurrentActive = Math.min(lines.length - 1, activeClause + 1) === idx;
             const color =
               ln.kind === 'comment'
                 ? TOKENS.inkMuted
                 : ln.kind === 'out'
                 ? TOKENS.emerald
-                : ln.highlight
+                : ln.highlight || isCurrentActive
                 ? TOKENS.amber
                 : TOKENS.ink;
             return (
@@ -1084,17 +1282,20 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
                 key={idx}
                 style={{
                   fontFamily: TOKENS.fontMono,
-                  fontSize: 26,
+                  fontSize: 25,
                   color,
-                  background: ln.highlight ? TOKENS.amberSoft : 'transparent',
-                  borderLeft: ln.highlight ? `3px solid ${TOKENS.amber}` : '3px solid transparent',
-                  padding: ln.highlight ? '8px 14px' : '2px 14px',
-                  borderRadius: 6,
+                  background: ln.highlight || isCurrentActive ? TOKENS.amberSoft : 'transparent',
+                  borderLeft: ln.highlight || isCurrentActive ? `3.5px solid ${TOKENS.amber}` : '3.5px solid transparent',
+                  padding: ln.highlight || isCurrentActive ? '10px 16px' : '4px 16px',
+                  borderRadius: 8,
                   opacity: p,
-                  transform: `translateX(${interpolate(p, [0, 1], [14, 0])}px)`,
+                  transform: `translateX(${interpolate(p, [0, 1], [16, 0])}px) scale(${isCurrentActive ? 1.01 : 1})`,
                 }}
               >
-                {ln.text}
+                {ln.text.slice(0, charsToShow)}
+                {(typeP < 1 || (isCurrentActive && frame % 18 < 10)) && frame >= startF && (
+                  <span style={{ display: 'inline-block', width: 10, height: 22, background: color, marginLeft: 5, verticalAlign: 'middle' }} />
+                )}
               </div>
             );
           })}
@@ -1104,7 +1305,7 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
   );
 };
 
-// 9. ranked_bars — Animated Horizontal Bars / Benchmark / Probability Distribution
+// 9. ranked_bars — Clause-Synced Horizontal Progress Bars + Kinetic Counter & Spotlight Shimmer
 const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -1112,32 +1313,62 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const bars: Array<{ label: string; pct: number; valueText: string; tone?: Tone }> = Array.isArray(d.bars)
     ? d.bars
     : [];
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
+  const focusedBarIdx = Math.min(bars.length - 1, Math.max(0, activeClause));
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
-      <div style={{ width: 1280, transform: 'translateY(-22px)', display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{ width: 1320, transform: 'translateY(-22px)', display: 'flex', flexDirection: 'column', gap: 20 }}>
         {d.heading && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
             <span style={{ fontSize: 38, fontWeight: 800, color: TOKENS.ink }}>{d.heading}</span>
             {d.heroStat && (
               <span style={{ fontFamily: TOKENS.fontMono, fontSize: 46, fontWeight: 800, color: TOKENS.amber }}>
-                {d.heroStat}
+                {formatRollingMetric(
+                  String(d.heroStat),
+                  interpolate(frame, [0, 26], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+                )}
               </span>
             )}
           </div>
         )}
         {bars.map((b, idx) => {
-          const p = spring({ frame: frame - idx * 6, fps, config: SPRING_SNAPPY });
+          const startF = idx * 8;
+          const p = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
+          const isFocused = idx === focusedBarIdx;
           const pal = tonePalette(b.tone || (idx === 0 ? 'amber' : 'neutral'));
           const widthPct = Math.max(2, Math.min(100, b.pct)) * p;
+          const barColor = pal.fg === TOKENS.ink ? '#8E8E98' : pal.fg;
+
           return (
-            <div key={idx} style={{ background: TOKENS.card, border: `1px solid ${TOKENS.border}`, borderRadius: 14, padding: '18px 24px' }}>
+            <div
+              key={idx}
+              style={{
+                background: isFocused ? TOKENS.cardElevated : TOKENS.card,
+                border: `${isFocused ? '1.5px' : '1px'} solid ${isFocused ? pal.fg : TOKENS.border}`,
+                borderRadius: 16,
+                padding: '18px 24px',
+                opacity: p * (isFocused || activeClause >= bars.length - 1 ? 1 : 0.72),
+                transform: `translateX(${interpolate(p, [0, 1], [-18, isFocused ? 6 : 0])}px) scale(${isFocused ? 1.016 : 1})`,
+                boxShadow: isFocused ? '0 18px 44px rgba(0,0,0,0.38)' : 'none',
+              }}
+            >
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                 <span style={{ fontSize: 25, fontWeight: 700, color: TOKENS.ink }}>{b.label}</span>
-                <span style={{ fontFamily: TOKENS.fontMono, fontSize: 25, fontWeight: 800, color: pal.fg }}>{b.valueText}</span>
+                <span style={{ fontFamily: TOKENS.fontMono, fontSize: 25, fontWeight: 800, color: pal.fg }}>
+                  {formatRollingMetric(b.valueText, p)}
+                </span>
               </div>
-              <div style={{ height: 14, background: '#202022', borderRadius: 999, overflow: 'hidden' }}>
-                <div style={{ width: `${widthPct}%`, height: '100%', background: pal.fg === TOKENS.ink ? '#71717A' : pal.fg, borderRadius: 999 }} />
+              <div style={{ height: 14, background: '#202022', borderRadius: 999, overflow: 'hidden', position: 'relative' }}>
+                <div
+                  style={{
+                    width: `${widthPct}%`,
+                    height: '100%',
+                    background: barColor,
+                    borderRadius: 999,
+                    boxShadow: isFocused ? `0 0 16px ${barColor}` : 'none',
+                  }}
+                />
               </div>
             </div>
           );
@@ -1147,31 +1378,27 @@ const PrimitiveRankedBars: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   );
 };
 
-// 10. evidence_clip — Warm Paper Document / ArXiv / GitHub README Excerpt + Highlighter
+// 10. evidence_clip — Warm Paper Document + Clause-Synced Excerpt Spotlight & Progressive Highlighter
 const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const d = scene.data || {};
   const excerpts: Array<{ text: string; highlight?: boolean }> = Array.isArray(d.excerpts) ? d.excerpts : [];
-  const beat2 = getBeatFrame(scene, 1, fps, 0.42);
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
+  const focusedIdx = Math.min(excerpts.length - 1, Math.max(0, activeClause));
 
-  const cardEnter = spring({ frame, fps, config: SPRING_SNAPPY });
-  const hiProgress = interpolate(frame, [beat2 - 2, beat2 + 14], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-    easing: Easing.out(Easing.cubic),
-  });
+  const cardEnter = spring({ frame, fps, config: SPRING_SILKY });
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
       <div
         style={{
-          width: 1160,
+          width: 1180,
           background: TOKENS.paper,
           color: TOKENS.paperInk,
-          borderRadius: 16,
-          padding: '38px 46px',
-          boxShadow: '0 32px 72px rgba(0,0,0,0.52)',
+          borderRadius: 18,
+          padding: '38px 48px',
+          boxShadow: '0 32px 76px rgba(0,0,0,0.54)',
           opacity: cardEnter,
           transform: `translateY(${interpolate(cardEnter, [0, 1], [26, -22])}px)`,
         }}
@@ -1186,22 +1413,39 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
           {d.docTitle || ''}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {excerpts.map((ex, i) => (
-            <div
-              key={i}
-              style={{
-                fontSize: 25,
-                lineHeight: 1.55,
-                color: '#27272A',
-                fontWeight: ex.highlight ? 700 : 500,
-                background: ex.highlight ? `linear-gradient(90deg, rgba(245, 158, 11, 0.34) ${hiProgress * 100}%, transparent ${hiProgress * 100}%)` : 'transparent',
-                padding: '6px 10px',
-                borderRadius: 6,
-              }}
-            >
-              {ex.text}
-            </div>
-          ))}
+          {excerpts.map((ex, i) => {
+            const startF = i === 0 ? 4 : getBeatFrame(scene, Math.min(i, scene.clauses.length - 1), fps, i / Math.max(1, excerpts.length));
+            const itemP = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
+            const hiProgress = interpolate(frame, [startF + 2, startF + 20], [0, 1], {
+              extrapolateLeft: 'clamp',
+              extrapolateRight: 'clamp',
+              easing: Easing.out(Easing.cubic),
+            });
+            const isFocused = i === focusedIdx && frame >= startF;
+            const shouldHighlight = ex.highlight || isFocused;
+
+            return (
+              <div
+                key={i}
+                style={{
+                  fontSize: 25,
+                  lineHeight: 1.55,
+                  color: '#18181B',
+                  fontWeight: shouldHighlight ? 700 : 500,
+                  background: shouldHighlight
+                    ? `linear-gradient(90deg, rgba(245, 158, 11, ${ex.highlight ? 0.36 : 0.2}) ${hiProgress * 100}%, rgba(0,0,0,0.03) ${hiProgress * 100}%)`
+                    : 'transparent',
+                  borderLeft: `4px solid ${isFocused ? '#D97706' : ex.highlight ? '#F59E0B' : 'transparent'}`,
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  opacity: interpolate(itemP, [0, 1], [0.25, isFocused ? 1 : 0.78]),
+                  transform: `translateX(${interpolate(itemP, [0, 1], [14, isFocused ? 6 : 0])}px)`,
+                }}
+              >
+                {ex.text}
+              </div>
+            );
+          })}
         </div>
       </div>
     </AbsoluteFill>
@@ -3308,70 +3552,79 @@ export const StudioVideo: React.FC<{
         </span>
       </div>
 
-      {/* Data-Driven 22-Primitive Scene Router + Universal Thesis Header */}
+      {/* Data-Driven 22-Primitive Scene Router + Universal Thesis Header + Silky Stage Transition */}
       {payload.scenes.map((sc) => {
         const fromF = Math.round(sc.start * fps);
         const durF = Math.max(1, Math.round((sc.end - sc.start) * fps));
         return (
           <Sequence key={sc.id} from={fromF} durationInFrames={durF}>
-            <SceneThesisHeader scene={sc} />
-            {sc.primitive === 'chapter_card' && <PrimitiveChapterCard scene={sc} />}
-            {sc.primitive === 'persona_quote' && <PrimitivePersonaQuote scene={sc} />}
-            {sc.primitive === 'dot_matrix_stat' && <PrimitiveDotMatrixStat scene={sc} />}
-            {sc.primitive === 'flow_3node' && <PrimitiveFlow3Node scene={sc} />}
-            {sc.primitive === 'matrix_compare' && <PrimitiveMatrixCompare scene={sc} />}
-            {sc.primitive === 'focus_hud_demo' && <PrimitiveFocusHudDemo scene={sc} />}
-            {sc.primitive === 'live_web_showcase' && <PrimitiveLiveWebShowcase scene={sc} />}
-            {sc.primitive === 'terminal_code_live' && <PrimitiveTerminalCodeLive scene={sc} />}
-            {sc.primitive === 'ranked_bars' && <PrimitiveRankedBars scene={sc} />}
-            {sc.primitive === 'evidence_clip' && <PrimitiveEvidenceClip scene={sc} />}
-            {sc.primitive === 'skill_editor_spotlight' && <PrimitiveSkillEditorSpotlight scene={sc} />}
-            {sc.primitive === 'stack_slice_builder' && <PrimitiveStackSliceBuilder scene={sc} />}
-            {(sc.primitive === 'traffic_gate_box' || sc.primitive === 'deep_module_box') && <PrimitiveTrafficGateBox scene={sc} />}
-            {sc.primitive === 'split_tree_chat_dispatch' && <PrimitiveSplitTreeChatDispatch scene={sc} />}
-            {sc.primitive === 'annotated_ui_tour' && <PrimitiveAnnotatedUiTour scene={sc} />}
-            {sc.primitive === 'org_tree_radiate' && <PrimitiveOrgTreeRadiate scene={sc} />}
-            {sc.primitive === 'pipeline_timeline_flow' && <PrimitivePipelineTimelineFlow scene={sc} />}
-            {sc.primitive === 'defense_boundary_flow' && <PrimitiveDefenseBoundaryFlow scene={sc} />}
-            {sc.primitive === 'row_permission_table' && <PrimitiveRowPermissionTable scene={sc} />}
-            {sc.primitive === 'acronym_token_slot' && <PrimitiveAcronymTokenSlot scene={sc} />}
-            {sc.primitive === 'metaphor_canvas' && <PrimitiveMetaphorCanvas scene={sc} />}
+            <SceneStageTransition durationInFrames={durF}>
+              <SceneThesisHeader scene={sc} />
+              {sc.primitive === 'chapter_card' && <PrimitiveChapterCard scene={sc} />}
+              {sc.primitive === 'persona_quote' && <PrimitivePersonaQuote scene={sc} />}
+              {sc.primitive === 'dot_matrix_stat' && <PrimitiveDotMatrixStat scene={sc} />}
+              {sc.primitive === 'flow_3node' && <PrimitiveFlow3Node scene={sc} />}
+              {sc.primitive === 'matrix_compare' && <PrimitiveMatrixCompare scene={sc} />}
+              {sc.primitive === 'focus_hud_demo' && <PrimitiveFocusHudDemo scene={sc} />}
+              {sc.primitive === 'live_web_showcase' && <PrimitiveLiveWebShowcase scene={sc} />}
+              {sc.primitive === 'terminal_code_live' && <PrimitiveTerminalCodeLive scene={sc} />}
+              {sc.primitive === 'ranked_bars' && <PrimitiveRankedBars scene={sc} />}
+              {sc.primitive === 'evidence_clip' && <PrimitiveEvidenceClip scene={sc} />}
+              {sc.primitive === 'skill_editor_spotlight' && <PrimitiveSkillEditorSpotlight scene={sc} />}
+              {sc.primitive === 'stack_slice_builder' && <PrimitiveStackSliceBuilder scene={sc} />}
+              {(sc.primitive === 'traffic_gate_box' || sc.primitive === 'deep_module_box') && <PrimitiveTrafficGateBox scene={sc} />}
+              {sc.primitive === 'split_tree_chat_dispatch' && <PrimitiveSplitTreeChatDispatch scene={sc} />}
+              {sc.primitive === 'annotated_ui_tour' && <PrimitiveAnnotatedUiTour scene={sc} />}
+              {sc.primitive === 'org_tree_radiate' && <PrimitiveOrgTreeRadiate scene={sc} />}
+              {sc.primitive === 'pipeline_timeline_flow' && <PrimitivePipelineTimelineFlow scene={sc} />}
+              {sc.primitive === 'defense_boundary_flow' && <PrimitiveDefenseBoundaryFlow scene={sc} />}
+              {sc.primitive === 'row_permission_table' && <PrimitiveRowPermissionTable scene={sc} />}
+              {sc.primitive === 'acronym_token_slot' && <PrimitiveAcronymTokenSlot scene={sc} />}
+              {sc.primitive === 'metaphor_canvas' && <PrimitiveMetaphorCanvas scene={sc} />}
+            </SceneStageTransition>
           </Sequence>
         );
       })}
 
-      {/* Editorial Dark Matte Subtitle Pill */}
-      {activeCaption && (
-        <div
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            bottom: 58,
-            display: 'flex',
-            justifyContent: 'center',
-            pointerEvents: 'none',
-            zIndex: 60,
-          }}
-        >
+      {/* Editorial Dark Matte Subtitle Pill with Clause Entrance Spring */}
+      {activeCaption && (() => {
+        const capLocalFrame = Math.max(0, Math.round((curSec - activeCaption.start) * fps));
+        const capEnter = spring({ frame: capLocalFrame, fps, config: SPRING_SILKY });
+        return (
           <div
             style={{
-              background: TOKENS.subtitleBg,
-              borderRadius: 10,
-              padding: '12px 34px',
-              fontSize: 40,
-              fontWeight: 700,
-              color: TOKENS.ink,
-              letterSpacing: '0.015em',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.32)',
-              maxWidth: '72%',
-              textAlign: 'center',
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 58,
+              display: 'flex',
+              justifyContent: 'center',
+              pointerEvents: 'none',
+              zIndex: 60,
             }}
           >
-            {activeCaption.displayText}
+            <div
+              style={{
+                background: TOKENS.subtitleBg,
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 12,
+                padding: '12px 34px',
+                fontSize: 40,
+                fontWeight: 700,
+                color: TOKENS.ink,
+                letterSpacing: '0.015em',
+                boxShadow: '0 10px 28px rgba(0,0,0,0.38)',
+                maxWidth: '74%',
+                textAlign: 'center',
+                opacity: interpolate(capEnter, [0, 1], [0.4, 1]),
+                transform: `translateY(${interpolate(capEnter, [0, 1], [7, 0])}px)`,
+              }}
+            >
+              {activeCaption.displayText}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Bottom-Right Real-Time Voice Waveform HUD */}
       {payload.showWaveform !== false && Array.isArray(payload.waveform) && payload.waveform.length > 0 && (() => {
