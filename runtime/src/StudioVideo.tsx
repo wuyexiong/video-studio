@@ -987,7 +987,7 @@ const PrimitiveMatrixCompare: React.FC<{ scene: StudioScene }> = ({ scene }) => 
   );
 };
 
-// 6. focus_hud_demo — Dimmed/Blurred Background Context + Foreground Interactive HUD Click
+// 6. focus_hud_demo — Dimmed/Blurred Background Context + Foreground Interactive HUD Click (Compact Balanced Buttons)
 const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -996,29 +996,17 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
     ? d.backdropCards
     : [];
 
-  const beat2 = getBeatFrame(scene, 1, fps, 0.45);
-  let clickFrame = beat2 + Math.round(0.6 * fps);
-  const kw = String(d.clickKeyword || 'allow').toLowerCase();
-  if (scene.clauses[1]?.chars?.length) {
-    const chList = scene.clauses[1].chars;
-    let joined = '';
-    const charOffsets: Array<{ idx: number; start: number }> = [];
-    for (const c of chList) {
-      charOffsets.push({ idx: joined.length, start: c.start });
-      joined += (c.text || '').toLowerCase();
-    }
-    const matchIdx = joined.indexOf(kw);
-    if (matchIdx >= 0) {
-      const hit = charOffsets.find((o) => o.idx >= matchIdx) || charOffsets[0];
-      if (hit) {
-        clickFrame = Math.max(beat2 + 5, Math.round((hit.start - scene.start) * fps));
-      }
-    }
-  }
+  const activeClause = getActiveClauseIdx(scene, frame, fps);
+  const beat2 = getBeatFrame(scene, 1, fps, 0.32);
+  const beat3 = getBeatFrame(scene, Math.min(2, scene.clauses.length - 1), fps, 0.58);
+  const beat4 = getBeatFrame(scene, Math.min(3, scene.clauses.length - 1), fps, 0.78);
+  const clickFrame = scene.clauses.length >= 4 ? beat4 : beat3;
 
-  const focus = spring({ frame: frame - (beat2 - 4), fps, config: SPRING_SNAPPY });
-  const click = spring({ frame: frame - clickFrame, fps, config: { damping: 18, stiffness: 250, mass: 0.7 } });
-  const isClicked = frame >= clickFrame + 3;
+  const focus = spring({ frame: frame - (beat2 - 4), fps, config: SPRING_SILKY });
+  const hoverP = spring({ frame: frame - beat3, fps, config: SPRING_SILKY });
+  const click = spring({ frame: frame - clickFrame, fps, config: SPRING_BOUNCE });
+  const isHovering = frame >= beat3 - 2 && frame < clickFrame + 2;
+  const isClicked = frame >= clickFrame + 2 || activeClause >= 3;
 
   return (
     <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center' }}>
@@ -1033,7 +1021,7 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
         }}
       >
         {backCards.slice(0, 3).map((bc, i) => {
-          const p = spring({ frame: frame - i * 4, fps, config: SPRING_SNAPPY });
+          const p = spring({ frame: frame - i * 4, fps, config: SPRING_SILKY });
           return (
             <div
               key={i}
@@ -1063,63 +1051,85 @@ const PrimitiveFocusHudDemo: React.FC<{ scene: StudioScene }> = ({ scene }) => {
       <div
         style={{
           position: 'absolute',
-          top: 140,
+          top: 150,
           opacity: focus,
-          transform: `translateY(${interpolate(focus, [0, 1], [-110, 0])}px)`,
+          transform: `translateY(${interpolate(focus, [0, 1], [-90, 0])}px)`,
         }}
       >
         <div
           style={{
-            width: 780,
+            width: 820,
             background: '#0E0F12',
             borderRadius: 24,
-            border: `1.5px solid ${isClicked ? TOKENS.emeraldBorder : 'rgba(255,255,255,0.18)'}`,
-            padding: '26px 32px',
-            boxShadow: '0 30px 70px rgba(0,0,0,0.55)',
+            border: `2px solid ${isClicked ? TOKENS.emerald : isHovering ? TOKENS.amber : 'rgba(255,255,255,0.18)'}`,
+            padding: '28px 34px',
+            boxShadow: isClicked
+              ? '0 30px 70px rgba(0,0,0,0.6), 0 0 32px rgba(52, 211, 153, 0.22)'
+              : '0 30px 70px rgba(0,0,0,0.55)',
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
             <span style={{ fontFamily: TOKENS.fontMono, fontSize: 22, fontWeight: 700, color: TOKENS.ink }}>
               {d.hudTitle || 'Action Required'}
             </span>
             {d.hudBadge && (
-              <span style={{ fontFamily: TOKENS.fontMono, fontSize: 17, color: TOKENS.amber, background: TOKENS.amberSoft, padding: '4px 12px', borderRadius: 999 }}>
+              <span style={{ fontFamily: TOKENS.fontMono, fontSize: 17, color: TOKENS.amber, background: TOKENS.amberSoft, padding: '4px 14px', borderRadius: 999, fontWeight: 700 }}>
                 {d.hudBadge}
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#18191E', padding: '16px 20px', borderRadius: 14 }}>
-            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 21, color: '#E4E4E7' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 20, background: '#18191E', padding: '16px 22px', borderRadius: 14 }}>
+            <span style={{ fontFamily: TOKENS.fontMono, fontSize: 21, color: '#E4E4E7', flex: 1 }}>
               {d.promptText || ''}
             </span>
-            <div style={{ display: 'flex', gap: 12, position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'relative', flexShrink: 0 }}>
               <span
                 style={{
-                  padding: '8px 22px',
+                  minWidth: 118,
+                  textAlign: 'center',
+                  whiteSpace: 'nowrap',
+                  padding: '9px 22px',
                   borderRadius: 999,
-                  background: isClicked ? TOKENS.emerald : TOKENS.emeraldSoft,
+                  background: isClicked ? TOKENS.emerald : isHovering ? 'rgba(52, 211, 153, 0.22)' : TOKENS.emeraldSoft,
                   border: `1.5px solid ${TOKENS.emerald}`,
                   color: isClicked ? '#111113' : TOKENS.emerald,
                   fontFamily: TOKENS.fontMono,
-                  fontSize: 20,
+                  fontSize: 19,
                   fontWeight: 800,
+                  transform: `scale(${isClicked ? 1.04 : isHovering ? 1.03 : 1})`,
+                  boxShadow: isClicked ? '0 0 20px rgba(52, 211, 153, 0.45)' : 'none',
                 }}
               >
-                {isClicked ? `✓ ${d.clickedLabel || 'Done'}` : d.primaryAction || 'Allow'}
+                {isClicked ? `✓ ${d.clickedLabel || '已锁定'}` : d.primaryAction || '切换身份'}
               </span>
               {d.secondaryAction && (
-                <span style={{ padding: '8px 18px', borderRadius: 999, border: `1px solid ${TOKENS.coralBorder}`, color: TOKENS.coral, fontFamily: TOKENS.fontMono, fontSize: 20, opacity: isClicked ? 0.4 : 1 }}>
+                <span
+                  style={{
+                    minWidth: 88,
+                    textAlign: 'center',
+                    whiteSpace: 'nowrap',
+                    padding: '9px 18px',
+                    borderRadius: 999,
+                    border: `1px solid ${TOKENS.coralBorder}`,
+                    color: TOKENS.coral,
+                    fontFamily: TOKENS.fontMono,
+                    fontSize: 19,
+                    fontWeight: 700,
+                    opacity: isClicked ? 0.32 : 0.88,
+                  }}
+                >
                   {d.secondaryAction}
                 </span>
               )}
               <svg
-                width="32"
-                height="32"
+                width="30"
+                height="30"
                 viewBox="0 0 24 24"
                 style={{
                   position: 'absolute',
-                  left: interpolate(click, [0, 1], [110, 38]),
-                  top: interpolate(click, [0, 1], [54, 24]),
+                  left: interpolate(hoverP, [0, 1], [135, 48]),
+                  top: interpolate(hoverP, [0, 1], [52, 24]),
+                  transform: `scale(${isClicked ? interpolate(click, [0, 0.5, 1], [1, 0.82, 1]) : 1})`,
                 }}
               >
                 <path d="M4 2L20 11L13 13L16 20L13 21.5L10 14.5L5 19Z" fill="#FFF" stroke="#111" strokeWidth="1.5" />
@@ -1261,22 +1271,37 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
         </div>
         <div style={{ padding: '28px 34px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {lines.map((ln, idx) => {
-            const startF = idx * stepF;
+            // Map activeClause to a single focused line so unselected lines never stay highlighted
+            const activeLineIdx =
+              lines.length > scene.clauses.length
+                ? Math.min(lines.length - 1, activeClause + 1)
+                : Math.min(lines.length - 1, activeClause);
+            const startF =
+              idx === 0
+                ? 0
+                : getBeatFrame(
+                    scene,
+                    Math.min(scene.clauses.length - 1, Math.max(0, lines.length > scene.clauses.length ? idx - 1 : idx)),
+                    fps,
+                    idx / Math.max(1, lines.length)
+                  );
             const p = spring({ frame: frame - startF, fps, config: SPRING_SILKY });
             const typeP = interpolate(frame, [startF, startF + 16], [0.12, 1], {
               extrapolateLeft: 'clamp',
               extrapolateRight: 'clamp',
             });
             const charsToShow = frame >= startF ? Math.ceil(ln.text.length * typeP) : 0;
-            const isCurrentActive = Math.min(lines.length - 1, activeClause + 1) === idx;
-            const color =
-              ln.kind === 'comment'
-                ? TOKENS.inkMuted
-                : ln.kind === 'out'
+            const isCurrentActive = idx === activeLineIdx && frame >= startF;
+            const isPast = idx < activeLineIdx && frame >= startF;
+            const color = isCurrentActive
+              ? ln.kind === 'out'
                 ? TOKENS.emerald
-                : ln.highlight || isCurrentActive
-                ? TOKENS.amber
-                : TOKENS.ink;
+                : TOKENS.amber
+              : ln.kind === 'comment'
+              ? TOKENS.inkMuted
+              : ln.kind === 'out'
+              ? TOKENS.emerald
+              : TOKENS.ink;
             return (
               <div
                 key={idx}
@@ -1284,12 +1309,12 @@ const PrimitiveTerminalCodeLive: React.FC<{ scene: StudioScene }> = ({ scene }) 
                   fontFamily: TOKENS.fontMono,
                   fontSize: 25,
                   color,
-                  background: ln.highlight || isCurrentActive ? TOKENS.amberSoft : 'transparent',
-                  borderLeft: ln.highlight || isCurrentActive ? `3.5px solid ${TOKENS.amber}` : '3.5px solid transparent',
-                  padding: ln.highlight || isCurrentActive ? '10px 16px' : '4px 16px',
+                  background: isCurrentActive ? TOKENS.amberSoft : 'transparent',
+                  borderLeft: isCurrentActive ? `3.5px solid ${TOKENS.amber}` : '3.5px solid transparent',
+                  padding: isCurrentActive ? '10px 16px' : '4px 16px',
                   borderRadius: 8,
-                  opacity: p,
-                  transform: `translateX(${interpolate(p, [0, 1], [16, 0])}px) scale(${isCurrentActive ? 1.01 : 1})`,
+                  opacity: isCurrentActive ? 1 : isPast ? 0.65 : p * 0.25,
+                  transform: `translateX(${interpolate(p, [0, 1], [16, isCurrentActive ? 6 : 0])}px) scale(${isCurrentActive ? 1.012 : 1})`,
                 }}
               >
                 {ln.text.slice(0, charsToShow)}
@@ -1421,8 +1446,9 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
               extrapolateRight: 'clamp',
               easing: Easing.out(Easing.cubic),
             });
-            const isFocused = i === focusedIdx && frame >= startF;
-            const shouldHighlight = ex.highlight || isFocused;
+            // Exclusively highlight ONLY the currently active item (turn off previous item when moving to next!)
+            const isFocused = i === focusedIdx;
+            const isPast = i < focusedIdx;
 
             return (
               <div
@@ -1430,16 +1456,16 @@ const PrimitiveEvidenceClip: React.FC<{ scene: StudioScene }> = ({ scene }) => {
                 style={{
                   fontSize: 25,
                   lineHeight: 1.55,
-                  color: '#18181B',
-                  fontWeight: shouldHighlight ? 700 : 500,
-                  background: shouldHighlight
-                    ? `linear-gradient(90deg, rgba(245, 158, 11, ${ex.highlight ? 0.36 : 0.2}) ${hiProgress * 100}%, rgba(0,0,0,0.03) ${hiProgress * 100}%)`
+                  color: isFocused ? '#111113' : '#3F3F46',
+                  fontWeight: isFocused ? 700 : 500,
+                  background: isFocused
+                    ? `linear-gradient(90deg, rgba(245, 158, 11, 0.34) ${hiProgress * 100}%, rgba(0,0,0,0.03) ${hiProgress * 100}%)`
                     : 'transparent',
-                  borderLeft: `4px solid ${isFocused ? '#D97706' : ex.highlight ? '#F59E0B' : 'transparent'}`,
+                  borderLeft: `4px solid ${isFocused ? '#D97706' : 'transparent'}`,
                   padding: '8px 14px',
                   borderRadius: 8,
-                  opacity: interpolate(itemP, [0, 1], [0.25, isFocused ? 1 : 0.78]),
-                  transform: `translateX(${interpolate(itemP, [0, 1], [14, isFocused ? 6 : 0])}px)`,
+                  opacity: isFocused ? 1 : isPast ? 0.54 : interpolate(itemP, [0, 1], [0.22, 0.42]),
+                  transform: `translateX(${isFocused ? 8 : 0}px) scale(${isFocused ? 1.012 : 1})`,
                 }}
               >
                 {ex.text}
@@ -1973,38 +1999,43 @@ const PrimitiveStackSliceBuilder: React.FC<{ scene: StudioScene }> = ({ scene })
                 <span style={{ fontSize: 32, fontWeight: 800, color: TOKENS.ink }}>{col.title}</span>
               </div>
 
-              {/* Bottom-Up Brick-by-Brick Stacked Architecture Blocks */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 'auto' }}>
+              {/* Bottom-Up Brick-by-Brick Stacked Architecture Blocks (1 Individual Item Lit Per Beat) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 'auto' }}>
                 {col.layers.map((ly, lIdx) => {
-                  // Stagger from BOTTOM (lIdx = layers.length - 1 -> 0f delay) to TOP (lIdx = 0 -> +22f delay)
-                  const bottomUpOrder = Math.max(0, col.layers.length - 1 - lIdx);
-                  const baseClauseF = getBeatFrame(scene, ly.stepClause, fps);
-                  const staggerFrames = bottomUpOrder * 11;
-                  const lyF = baseClauseF + staggerFrames;
-                  const isShown = frame >= lyF - 1;
-                  const lp = spring({ frame: frame - lyF, fps, config: SPRING_SNAPPY });
+                  const activeClause = getActiveClauseIdx(scene, frame, fps);
+                  const lyClause = ly.stepClause ?? 0;
+                  const lyF = lyClause === 0 ? 4 : getBeatFrame(scene, Math.min(lyClause, scene.clauses.length - 1), fps);
+                  const isShown = frame >= lyF - 1 && activeClause >= lyClause;
+                  const isCurrentBeat = activeClause === lyClause;
+                  const lp = spring({ frame: frame - lyF, fps, config: SPRING_SILKY });
                   const cStyle = layerColorMap[ly.color || 'blue'];
 
                   return (
                     <div
                       key={lIdx}
                       style={{
-                        height: 86,
-                        borderRadius: 12,
+                        height: col.layers.length <= 2 ? 128 : 86,
+                        padding: '0 18px',
+                        borderRadius: 14,
                         background: cStyle.bg,
-                        border: `2px solid ${cStyle.border}`,
+                        border: `${isCurrentBeat ? '3px' : '2px'} solid ${isCurrentBeat ? '#FFFFFF' : cStyle.border}`,
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        opacity: isShown ? lp : 0,
-                        transform: `translateY(${interpolate(lp, [0, 1], [34, 0])}px) scale(${interpolate(lp, [0, 1], [0.9, 1])})`,
-                        boxShadow: '0 10px 26px rgba(0,0,0,0.28)',
+                        gap: 4,
+                        opacity: isShown ? (isCurrentBeat ? 1 : 0.76) : 0.08,
+                        transform: `translateY(${isShown ? interpolate(lp, [0, 1], [28, isCurrentBeat ? -4 : 0]) : 22}px) scale(${
+                          isShown ? (isCurrentBeat ? 1.035 : 0.99) : 0.92
+                        })`,
+                        boxShadow: isCurrentBeat
+                          ? `0 0 28px ${cStyle.border}, 0 16px 36px rgba(0,0,0,0.45)`
+                          : '0 10px 26px rgba(0,0,0,0.28)',
                       }}
                     >
-                      <span style={{ fontSize: 27, fontWeight: 900, color: cStyle.text }}>{ly.label}</span>
+                      <span style={{ fontSize: 25, fontWeight: 900, color: cStyle.text, textAlign: 'center' }}>{ly.label}</span>
                       {ly.sub && (
-                        <span style={{ fontFamily: TOKENS.fontMono, fontSize: 16, fontWeight: 700, color: cStyle.text, opacity: 0.85 }}>
+                        <span style={{ fontFamily: TOKENS.fontMono, fontSize: 16, fontWeight: 700, color: cStyle.text, opacity: 0.9, textAlign: 'center' }}>
                           {ly.sub}
                         </span>
                       )}
