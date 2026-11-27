@@ -43,8 +43,8 @@ All renders in `video-studio` are 100% data-driven via a single `video_project.j
   "default_preset": "mix",
   "speed_factor": 1.10,
   "fps": 30,
-  "show_waveform": false,
-  "subtitle_font_size": 44,
+  "show_waveform": true,
+  "subtitle_font_size": 56,
   "captures": [
     {
       "sceneId": "ch1_s2",

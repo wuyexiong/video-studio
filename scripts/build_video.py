@@ -506,6 +506,151 @@ def onset_safe_trim_48k(raw_wav: Path, out_wav: Path, sr_target: int = 48000) ->
     return len(clipped) / float(sr)
 
 
+def _has_punct_between_tokens(ref_text: str, chars: list[dict]) -> list[bool]:
+    """Return bool flags indicating whether pause punctuation exists in ref_text between chars[i] and chars[i+1]."""
+    n = len(chars)
+    if n < 2 or not ref_text:
+        return [False] * max(0, n - 1)
+    low_ref = ref_text.lower()
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    for c in chars:
+        tok = str(c.get("text", "")).strip().lower()
+        if not tok:
+            spans.append((pos, pos))
+            continue
+        idx = low_ref.find(tok, pos)
+        if idx == -1 and len(tok) > 0:
+            idx = low_ref.find(tok[0], pos)
+            if idx != -1:
+                spans.append((idx, idx + 1))
+                pos = idx + 1
+                continue
+        if idx == -1:
+            spans.append((pos, pos))
+        else:
+            spans.append((idx, idx + len(tok)))
+            pos = idx + len(tok)
+    flags: list[bool] = []
+    for i in range(n - 1):
+        mid = ref_text[spans[i][1] : spans[i + 1][0]] if spans[i + 1][0] >= spans[i][1] else ""
+        flags.append(bool(re.search(r"[，,、：:；;—…]", mid)))
+    return flags
+
+
+def compact_intra_clause_silences(
+    wav: np.ndarray,
+    sr: int,
+    chars: list[dict],
+    ref_text: str = "",
+) -> tuple[np.ndarray, list[dict]]:
+    """
+    Surgically compact unnatural GPT-SoVITS dead-silence stalls inside a clause
+    (especially at CJK <-> English boundaries like '第一波 [2.08s] AI' or '两年 [1.04s] AI')
+    while preserving 100% of unaligned active speech (e.g. '%' spoken as '百分之'), vowel tails,
+    and consonant pre-rolls via 5ms envelope scanning + 10ms cosine crossfade.
+    """
+    if len(wav) == 0 or len(chars) < 2:
+        return wav, chars
+
+    punct_flags = _has_punct_between_tokens(ref_text, chars)
+    win = max(1, int(0.005 * sr))
+    xfade_n = max(4, int(0.010 * sr))
+
+    cur_wav = wav.copy()
+    cur_chars = [dict(c) for c in chars]
+
+    for i in range(len(cur_chars) - 1):
+        t0 = float(cur_chars[i]["end"])
+        t1 = float(cur_chars[i + 1]["start"])
+        gap = t1 - t0
+        has_punct = punct_flags[i] if i < len(punct_flags) else False
+        max_allowed_gap = 0.28 if has_punct else 0.14
+        target_keep_sil = 0.14 if has_punct else 0.025
+        if gap <= max_allowed_gap:
+            continue
+
+        scan_lo = max(0.0, max(float(cur_chars[i]["start"]) + 0.040, t0 - 0.020))
+        scan_hi = min(len(cur_wav) / float(sr), min(float(cur_chars[i + 1]["end"]) - 0.040, t1 + 0.020))
+        if scan_hi <= scan_lo:
+            scan_lo, scan_hi = max(0.0, t0), min(len(cur_wav) / float(sr), t1)
+        s_lo = int(round(scan_lo * sr))
+        s_hi = int(round(scan_hi * sr))
+        if s_hi - s_lo < win * 8:
+            continue
+
+        seg = np.abs(cur_wav[s_lo:s_hi])
+        n_w = len(seg) // win
+        if n_w < 6:
+            continue
+        w_peaks = seg[: n_w * win].reshape(n_w, win).max(axis=1)
+        is_sil = w_peaks < 0.0065  # ~ -43.7 dBFS: true dead silence only
+
+        best_a = best_b = cur_a = 0
+        in_run = False
+        for w_i, val in enumerate(is_sil):
+            if val and not in_run:
+                cur_a = w_i
+                in_run = True
+            elif not val and in_run:
+                if (w_i - cur_a) > (best_b - best_a):
+                    best_a, best_b = cur_a, w_i
+                in_run = False
+        if in_run and (n_w - cur_a) > (best_b - best_a):
+            best_a, best_b = cur_a, n_w
+
+        sil_start_sec = scan_lo + (best_a * win) / float(sr) + 0.028
+        sil_end_sec = scan_lo + (best_b * win) / float(sr) - 0.024
+        pure_sil_sec = sil_end_sec - sil_start_sec
+        if pure_sil_sec <= target_keep_sil + 0.035:
+            continue
+
+        half_keep = 0.5 * target_keep_sil
+        ia = int(round((sil_start_sec + half_keep) * sr))
+        ib = int(round((sil_end_sec - half_keep) * sr))
+        if ib - ia <= xfade_n * 2 or ia < xfade_n or ib + xfade_n >= len(cur_wav):
+            continue
+
+        alpha = 0.5 * (1.0 - np.cos(np.pi * np.linspace(0.0, 1.0, xfade_n, dtype=np.float32)))
+        blended = cur_wav[ia - xfade_n : ia] * (1.0 - alpha) + cur_wav[ib - xfade_n : ib] * alpha
+        new_wav = np.concatenate([cur_wav[: ia - xfade_n], blended, cur_wav[ib:]])
+        removed_sec = (len(cur_wav) - len(new_wav)) / float(sr)
+        cur_wav = new_wav
+        new_dur = len(cur_wav) / float(sr)
+
+        for k in range(i + 1, len(cur_chars)):
+            cur_chars[k]["start"] = round(max(0.0, min(new_dur, float(cur_chars[k]["start"]) - removed_sec)), 3)
+            cur_chars[k]["end"] = round(max(cur_chars[k]["start"], min(new_dur, float(cur_chars[k]["end"]) - removed_sec)), 3)
+
+    return cur_wav, cur_chars
+
+
+def _max_silent_mid_gap(wav_arr: np.ndarray, sr: int, chars: list[dict], expected_text: str = "") -> tuple[float, str]:
+    """Measure the largest true silent (RMS < 0.012) non-punctuation gap inside a clause."""
+    if len(wav_arr) == 0 or len(chars) < 2:
+        return 0.0, ""
+    punct_flags = _has_punct_between_tokens(expected_text, chars)
+    worst_gap = 0.0
+    worst_tok = ""
+    for m_i in range(len(chars) - 1):
+        if m_i < len(punct_flags) and punct_flags[m_i]:
+            continue
+        tok_cur = str(chars[m_i].get("text", "")).strip()
+        if tok_cur in {"", "，", ",", "、", "：", ":", "；", ";"}:
+            continue
+        t0 = float(chars[m_i]["end"])
+        t1 = float(chars[m_i + 1]["start"])
+        gap = t1 - t0
+        if gap <= 0.16:
+            continue
+        seg = wav_arr[max(0, int(t0 * sr)) : min(len(wav_arr), int(t1 * sr))]
+        seg_rms = float(np.sqrt(np.mean(seg ** 2))) if len(seg) > 32 else 0.0
+        if seg_rms < 0.012 and gap > worst_gap:
+            worst_gap = gap
+            worst_tok = tok_cur
+    return worst_gap, worst_tok
+
+
 def is_healthy_clause_audio(
     wav_arr: np.ndarray,
     sr: int,
@@ -527,18 +672,13 @@ def is_healthy_clause_audio(
         return False, f"silent_collapse(rms={rms:.4f},peak={peak:.4f})"
     if dur < min_expected_dur:
         return False, f"early_eos_truncation(dur={dur:.3f}s<min={min_expected_dur:.3f}s,units={n_units})"
-    if len(chars) >= 6:
+    if len(chars) >= 4:
         nonzero = sum(1 for c in chars if (float(c["end"]) - float(c["start"])) > 0.005)
-        if nonzero < len(chars) * 0.35:
+        if len(chars) >= 6 and nonzero < len(chars) * 0.35:
             return False, f"aligner_timestamp_collapse(nonzero={nonzero}/{len(chars)})"
-        # Detect unnatural mid-phrase stalls (>0.34s gap without punctuation)
-        for m_i in range(len(chars) - 1):
-            tok_cur = str(chars[m_i].get("text", "")).strip()
-            if tok_cur in {"", "，", ",", "、", "：", ":", "；", ";"}:
-                continue
-            gap = float(chars[m_i + 1]["start"]) - float(chars[m_i]["end"])
-            if gap > 0.34:
-                return False, f"mid_clause_stall(gap={gap:.2f}s after {tok_cur!r})"
+        worst_gap, worst_tok = _max_silent_mid_gap(wav_arr, sr, chars, expected_text=expected_text)
+        if worst_gap > 0.24:
+            return False, f"mid_clause_stall(gap={worst_gap:.2f}s after {worst_tok!r})"
 
     if asr_engine is not None and expected_text and n_units >= 5:
         try:
@@ -634,7 +774,8 @@ def synth_and_align_clause(
     """
     Aligner-Guided + Acoustic-Bounded Exact Trim & Timestamping (v7 Tail-Safe + ASR Guard):
     """
-    vid, vcfg, eff_preset, ref_wav_init, _, _ = resolve_voice_preset(voice, preset, reg)
+    req_preset = "mix" if (preset or "").strip() == "zh" and re.search(r"[A-Za-z]", tts_text) else preset
+    vid, vcfg, eff_preset, ref_wav_init, _, _ = resolve_voice_preset(voice, req_preset, reg)
     resolved_lang_init = "en" if eff_preset == "en" else "zh"
     clean_tts = normalize_tts_text(tts_text, lang=resolved_lang_init)
     aux_refs = resolve_voice_aux_refs(vcfg)
@@ -650,7 +791,7 @@ def synth_and_align_clause(
         try:
             meta = json.loads(json_cache.read_text(encoding="utf-8"))
             cached_wav, cached_sr = sf.read(str(wav_cache), dtype="float32")
-            ok, reason = is_healthy_clause_audio(cached_wav, cached_sr, meta.get("chars", []), n_units)
+            ok, reason = is_healthy_clause_audio(cached_wav, cached_sr, meta.get("chars", []), n_units, expected_text=clean_tts)
             if ok:
                 return wav_cache, float(meta["duration"]), meta["chars"], vid, eff_preset
             print(f"[VoiceClone Guard] Purging unhealthy cached clause ({reason}): {clean_tts}")
@@ -666,12 +807,13 @@ def synth_and_align_clause(
     retry_configs = [
         {"preset": eff_preset, "temp": 0.72, "top_p": 0.86, "top_k": 14, "split": "cut0", "parallel": False, "text": clean_tts},
         {"preset": eff_preset, "temp": 0.68, "top_p": 0.84, "top_k": 12, "split": "cut0", "parallel": False, "text": punct_text},
+        {"preset": eff_preset, "temp": 0.76, "top_p": 0.88, "top_k": 16, "split": "cut0", "parallel": False, "text": punct_text},
         {"preset": eff_preset, "temp": 0.64, "top_p": 0.82, "top_k": 12, "split": "cut5", "parallel": False, "text": punct_text},
-        {"preset": eff_preset, "temp": 0.60, "top_p": 0.80, "top_k": 10, "split": "cut0", "parallel": False, "text": clean_tts},
     ]
 
     clipped = np.zeros(int(0.5 * sr), dtype=np.float32)
     chars = []
+    best_candidate: tuple[float, np.ndarray, list[dict]] | None = None
 
     for attempt_idx, cfg in enumerate(retry_configs, 1):
         _, _, cur_preset, ref_wav, ref_txt, ref_lang = resolve_voice_preset(vid, cfg["preset"], reg)
@@ -693,7 +835,7 @@ def synth_and_align_clause(
             "text_split_method": cfg["split"],
             "batch_size": 1,
             "speed_factor": speed,
-            "fragment_interval": 0.18,
+            "fragment_interval": 0.07,
             "parallel_infer": cfg["parallel"],
             "repetition_penalty": 1.35,
             "media_type": "wav",
@@ -764,16 +906,25 @@ def synth_and_align_clause(
             ]
             if chars and chars[-1]["end"] < clip_dur - 0.22:
                 chars[-1]["end"] = round(max(chars[-1]["start"] + 0.08, clip_dur - 0.06), 3)
+            clipped, chars = compact_intra_clause_silences(clipped, sr, chars, ref_text=clean_tts)
         else:
             clipped = wav.copy()
             chars = []
 
         ok, reason = is_healthy_clause_audio(clipped, sr, chars, n_units, asr_engine=asr_engine, expected_text=clean_tts)
+        worst_gap, _ = _max_silent_mid_gap(clipped, sr, chars, expected_text=clean_tts)
+        penalty = worst_gap + (0.0 if ok else (5.0 if "word_drop" in reason or "collapse" in reason or "truncation" in reason else 1.0))
+        if best_candidate is None or penalty < best_candidate[0]:
+            best_candidate = (penalty, clipped.copy(), [dict(c) for c in chars])
         if ok:
             if attempt_idx > 1:
                 print(f"[VoiceClone Guard] Retry #{attempt_idx} succeeded for: {clean_tts} (dur={len(clipped)/sr:.2f}s)")
             break
         print(f"[VoiceClone Guard] Attempt #{attempt_idx} unhealthy ({reason}) for '{clean_tts}' -> retrying...")
+    else:
+        if best_candidate is not None:
+            clipped, chars = best_candidate[1], best_candidate[2]
+            print(f"[VoiceClone Guard] Selected best-of-N candidate (penalty={best_candidate[0]:.2f}) for '{clean_tts}'")
 
     clipped = normalize_clause_rms(clipped, target_rms=0.085)
     sf.write(str(wav_cache), clipped, sr, subtype="PCM_16")
@@ -803,7 +954,8 @@ def synth_and_align_group(
     """
     if len(raw_texts) < 2:
         return None
-    vid, vcfg, eff_preset, ref_wav, ref_txt, ref_lang = resolve_voice_preset(voice, preset, reg)
+    req_preset = "mix" if (preset or "").strip() == "zh" and any(re.search(r"[A-Za-z]", x) for x in raw_texts) else preset
+    vid, vcfg, eff_preset, ref_wav, ref_txt, ref_lang = resolve_voice_preset(voice, req_preset, reg)
     if not os.path.isfile(ref_wav):
         return None
     resolved_lang = "en" if eff_preset == "en" else "zh"
@@ -831,6 +983,11 @@ def synth_and_align_group(
                 if not wp.exists():
                     out_cached = []
                     break
+                cw, csr = sf.read(str(wp), dtype="float32")
+                ok_g, _ = is_healthy_clause_audio(cw, csr, item["chars"], max(1, count_units(norm_list[idx])), expected_text=norm_list[idx])
+                if not ok_g:
+                    out_cached = []
+                    break
                 out_cached.append((wp, float(item["duration"]), item["chars"], vid, eff_preset))
             if len(out_cached) == len(raw_texts):
                 return out_cached
@@ -851,7 +1008,7 @@ def synth_and_align_group(
         "text_split_method": "cut0",
         "batch_size": 1,
         "speed_factor": speed,
-        "fragment_interval": 0.16,
+        "fragment_interval": 0.07,
         "parallel_infer": False,
         "repetition_penalty": 1.35,
         "media_type": "wav",
@@ -959,6 +1116,8 @@ def synth_and_align_group(
                 }
                 for sg in b_segs
             ]
+            sub_wav, sub_chars = compact_intra_clause_silences(sub_wav, sr, sub_chars, ref_text=norm_list[k])
+            sub_dur = round(len(sub_wav) / float(sr), 3)
             n_u = max(1, count_units(norm_list[k]))
             ok, _ = is_healthy_clause_audio(sub_wav, sr, sub_chars, n_u, asr_engine=asr_engine, expected_text=norm_list[k])
             if not ok:
@@ -1051,8 +1210,9 @@ def build_chapters_clone_mode(
             while idx_c < len(clauses_in):
                 cl0 = clauses_in[idx_c]
                 v0 = voice_override or cl0.get("voice") or sc_voice
-                p0 = cl0.get("preset") or preset
                 t0 = (cl0.get("tts_text") or cl0["display_text"]).strip()
+                raw_p0 = cl0.get("preset") or preset
+                p0 = "mix" if (raw_p0 or "").strip() == "zh" and re.search(r"[A-Za-z]", t0) else raw_p0
                 can_start_group = (
                     enable_group_tts
                     and idx_c + 1 < len(clauses_in)
@@ -1066,8 +1226,9 @@ def build_chapters_clone_mode(
                     while j < len(clauses_in) and len(grp_indices) < 3:
                         clj = clauses_in[j]
                         vj = voice_override or clj.get("voice") or sc_voice
-                        pj = clj.get("preset") or preset
                         tj = (clj.get("tts_text") or clj["display_text"]).strip()
+                        raw_pj = clj.get("preset") or preset
+                        pj = "mix" if (raw_pj or "").strip() == "zh" and re.search(r"[A-Za-z]", tj) else raw_pj
                         uj = count_units(tj)
                         if vj != v0 or pj != p0 or (grp_units + uj) > 42:
                             break
@@ -1579,8 +1740,8 @@ def main():
             "globalTotalDurationSec": ch["globalTotalDurationSec"],
             "chapterDurationsSec": [c_item["chapterDurationSec"] for c_item in chapters],
             "audioFile": f"{job_rel}/{audio_name}",
-            "showWaveform": bool(proj.get("show_waveform", False)),
-            "subtitleFontSize": int(proj.get("subtitle_font_size", 44)),
+            "showWaveform": bool(proj.get("show_waveform", True)),
+            "subtitleFontSize": int(proj.get("subtitle_font_size", 56)),
             "waveform": waveform_frames,
             "scenes": staged_scenes,
             "captions": ch["captions"],

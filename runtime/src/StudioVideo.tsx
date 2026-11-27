@@ -5623,7 +5623,7 @@ export const StudioVideo: React.FC<{
 
       {/* Forensic Locked #090909 Borderless Subtitle Capsule (bottom: 61px standard, fontWeight: 800) */}
       {activeCaption && (() => {
-        const subFontSize = payload.subtitleFontSize || 44;
+        const subFontSize = payload.subtitleFontSize || 56;
         const isXlSub = subFontSize >= 54;
         const isLargeSub = subFontSize > 44;
         const capLocalFrame = Math.max(0, frame - Math.round(activeCaption.start * fps));
